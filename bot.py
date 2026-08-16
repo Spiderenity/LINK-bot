@@ -154,7 +154,7 @@ class Enemy:
 @dataclass
 class Room:
     pos: Tuple[int, int]
-    kind: str = "normal"  # start, normal, boss, shop, slot
+    kind: str = "normal"  # start, normal, boss, coin, empty, pot, shop, slot
     visited: bool = False
     cleared: bool = False
     enemy: Optional[Enemy] = None
@@ -175,6 +175,7 @@ class PlayerState:
     armor: Gear
     last_day: str
     status: str
+    floor_number: int
 
 
 @dataclass
@@ -182,6 +183,7 @@ class GameSession:
     guild_id: int
     user_id: int
     day_key: str
+    floor_number: int
     rooms: Dict[Tuple[int, int], Room]
     current: Tuple[int, int]
     boss_pos: Tuple[int, int]
@@ -227,17 +229,25 @@ class Database:
                     armor_json TEXT NOT NULL,
                     last_day TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'ready',
+                    floor_number INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (guild_id, user_id)
                 )
                 """
             )
+            columns = {
+                row[1] for row in con.execute("PRAGMA table_info(players)").fetchall()
+            }
+            if "floor_number" not in columns:
+                con.execute(
+                    "ALTER TABLE players ADD COLUMN floor_number INTEGER NOT NULL DEFAULT 1"
+                )
 
     def get_player(self, guild_id: int, user_id: int) -> PlayerState:
         with self.connect() as con:
             row = con.execute(
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
-                       weapon_json, armor_json, last_day, status
+                       weapon_json, armor_json, last_day, status, floor_number
                 FROM players
                 WHERE guild_id=? AND user_id=?
                 """,
@@ -249,8 +259,8 @@ class Database:
                     """
                     INSERT INTO players
                     (guild_id, user_id, coins, bombs, max_hp, hp,
-                     weapon_json, armor_json, last_day, status)
-                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready')
+                     weapon_json, armor_json, last_day, status, floor_number)
+                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1)
                     """,
                     (
                         guild_id,
@@ -273,6 +283,7 @@ class Database:
             armor=Gear.from_json(row[7]),
             last_day=row[8],
             status=row[9],
+            floor_number=row[10],
         )
 
     def save_player(self, p: PlayerState):
@@ -281,7 +292,7 @@ class Database:
                 """
                 UPDATE players
                 SET coins=?, bombs=?, max_hp=?, hp=?,
-                    weapon_json=?, armor_json=?, last_day=?, status=?
+                    weapon_json=?, armor_json=?, last_day=?, status=?, floor_number=?
                 WHERE guild_id=? AND user_id=?
                 """,
                 (
@@ -293,6 +304,7 @@ class Database:
                     p.armor.to_json(),
                     p.last_day,
                     p.status,
+                    p.floor_number,
                     p.guild_id,
                     p.user_id,
                 ),
@@ -317,6 +329,7 @@ class Database:
         p.hp = p.max_hp
         p.last_day = ""
         p.status = "ready"
+        p.floor_number = 1
         self.save_player(p)
 
 
@@ -399,7 +412,7 @@ def bfs_distances(positions, start=(0, 0)):
     return distance
 
 
-def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
+def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1) -> GameSession:
     positions = {(0, 0)}
     while len(positions) < 8:
         anchor = random.choice(tuple(positions))
@@ -411,13 +424,34 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
 
     rooms: Dict[Tuple[int, int], Room] = {}
 
+    regular_positions = [
+        pos for pos in positions
+        if pos != (0, 0) and pos != boss_pos
+    ]
+
+    room_kinds = random.choices(
+        ("normal", "coin", "empty", "pot"),
+        weights=(55, 15, 15, 15),
+        k=len(regular_positions),
+    )
+
+    while room_kinds.count("normal") < min(2, len(room_kinds)):
+        index = random.randrange(len(room_kinds))
+        room_kinds[index] = "normal"
+
+    kind_by_pos = dict(zip(regular_positions, room_kinds))
+
     for pos in positions:
         if pos == (0, 0):
             rooms[pos] = Room(pos, "start", visited=True, cleared=True)
         elif pos == boss_pos:
             rooms[pos] = Room(pos, "boss", enemy=make_enemy(True))
         else:
-            rooms[pos] = Room(pos, "normal", enemy=make_enemy(False))
+            kind = kind_by_pos[pos]
+            if kind == "normal":
+                rooms[pos] = Room(pos, "normal", enemy=make_enemy(False))
+            else:
+                rooms[pos] = Room(pos, kind)
 
     candidates = []
     for source in positions:
@@ -444,6 +478,7 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
         guild_id=guild_id,
         user_id=user_id,
         day_key=day,
+        floor_number=floor_number,
         rooms=rooms,
         current=(0, 0),
         boss_pos=boss_pos,
@@ -521,6 +556,9 @@ def room_name(room: Room):
         "start": "시작 방",
         "normal": "전투 방",
         "boss": "보스 방",
+        "coin": "버려진 코인",
+        "empty": "빈 방",
+        "pot": "항아리",
         "shop": "비밀 상점",
         "slot": "슬롯머신 방",
     }[room.kind]
@@ -617,7 +655,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
 
 def exploration_embed(player, session, note=""):
     room = session.room()
-    embed = player_embed(player, session, room_name(room))
+    embed = player_embed(player, session, f"{session.floor_number}층 · {room_name(room)}")
     if note:
         embed.description = note
 
@@ -633,6 +671,8 @@ def exploration_embed(player, session, note=""):
     around = [f"{DIR_EMOJI[direction]} 문" for direction, _ in accessible_directions(session)]
     if crack_here(session):
         around.append(f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**")
+    if session.boss_defeated and session.current == session.boss_pos:
+        around.append("🚪 **다음 층으로 올라가는 문**")
 
     embed.add_field(
         name="주변",
@@ -641,9 +681,14 @@ def exploration_embed(player, session, note=""):
     )
 
     if session.boss_defeated:
-        embed.set_footer(
-            text="보스를 처치했다! 여기서 끝내거나 더 탐색할 수 있다."
-        )
+        if session.current == session.boss_pos:
+            embed.set_footer(
+                text="다음 층으로 올라가거나 더 둘러볼 수 있다."
+            )
+        else:
+            embed.set_footer(
+                text="보스 방에 다음 층으로 올라가는 문이 있다."
+            )
     return embed
 
 
@@ -652,11 +697,12 @@ def combat_embed(player, session, note=""):
     assert enemy is not None
 
     color_icon = COLOR_MARK[enemy.color]
-    title = (
+    enemy_title = (
         f"{color_icon} {enemy.color} 보스"
         if enemy.boss
         else f"{color_icon} {enemy.color} {enemy.shape}"
     )
+    title = f"{session.floor_number}층 · {enemy_title}"
 
     embed = discord.Embed(
         title=title,
@@ -821,17 +867,31 @@ class ExploreView(OwnerView):
             btn.callback = crack_callback
             self.add_item(btn)
 
-        if session.boss_defeated:
+        room = session.room()
+        if room.kind == "pot" and not room.cleared:
             btn = discord.ui.Button(
-                label="오늘은 여기까지",
-                emoji="✅",
+                label="항아리 깨기",
+                emoji="🏺",
+                style=discord.ButtonStyle.secondary,
+            )
+
+            async def pot_callback(interaction):
+                await break_pot(interaction, self.session)
+
+            btn.callback = pot_callback
+            self.add_item(btn)
+
+        if session.boss_defeated and session.current == session.boss_pos:
+            btn = discord.ui.Button(
+                label="다음 층으로 올라가기",
+                emoji="🚪",
                 style=discord.ButtonStyle.success,
             )
 
-            async def end_callback(interaction):
-                await end_day(interaction, self.session)
+            async def climb_callback(interaction):
+                await climb_next_floor(interaction, self.session)
 
-            btn.callback = end_callback
+            btn.callback = climb_callback
             self.add_item(btn)
 
 
@@ -1160,10 +1220,7 @@ async def timeout_timing(interaction, session, kind, token):
 
 async def move_player(interaction, session, direction, target):
     if session.ended:
-        await interaction.response.send_message(
-            "오늘은 여기까지다.",
-            ephemeral=True,
-        )
+        await interaction.response.defer()
         return
 
     cancel_cue(session)
@@ -1199,9 +1256,83 @@ async def move_player(interaction, session, direction, target):
         )
         return
 
+    if room.kind == "coin" and not room.cleared:
+        amount = random.randint(1, 3)
+        p.coins += amount
+        room.cleared = True
+        db.save_player(p)
+        session.phase = "explore"
+        await interaction.response.edit_message(
+            embed=exploration_embed(
+                p,
+                session,
+                f"🪙 코인 **{amount}개**를 주웠다.",
+            ),
+            view=ExploreView(session),
+        )
+        return
+
+    if room.kind == "empty" and not room.cleared:
+        room.cleared = True
+        session.phase = "explore"
+        await interaction.response.edit_message(
+            embed=exploration_embed(
+                p,
+                session,
+                "아무것도 없다.",
+            ),
+            view=ExploreView(session),
+        )
+        return
+
+    if room.kind == "pot" and not room.cleared:
+        session.phase = "explore"
+        await interaction.response.edit_message(
+            embed=exploration_embed(
+                p,
+                session,
+                "항아리가 있다.",
+            ),
+            view=ExploreView(session),
+        )
+        return
+
     session.phase = "explore"
     await interaction.response.edit_message(
         embed=exploration_embed(p, session),
+        view=ExploreView(session),
+    )
+
+
+async def break_pot(interaction, session):
+    room = session.room()
+    if room.kind != "pot" or room.cleared:
+        await interaction.response.defer()
+        return
+
+    p = db.get_player(session.guild_id, session.user_id)
+    room.cleared = True
+    roll = random.random()
+
+    if roll < 0.50:
+        amount = random.randint(1, 4)
+        p.coins += amount
+        db.save_player(p)
+        note = f"🏺 항아리를 깼다! 코인 **{amount}개**가 나왔다."
+    elif roll < 0.80:
+        note = "🏺 항아리를 깼다. 아무것도 없었다."
+    else:
+        damage = random.randint(1, 3)
+        p.hp = max(0, p.hp - damage)
+        db.save_player(p)
+        note = f"🏺 항아리를 깼다. **{damage} 피해**"
+
+        if p.hp <= 0:
+            await player_died(interaction, session, note)
+            return
+
+    await interaction.response.edit_message(
+        embed=exploration_embed(p, session, note),
         view=ExploreView(session),
     )
 
@@ -1481,7 +1612,7 @@ async def show_after_clear(interaction, session, note):
     if session.boss_defeated and session.current == session.boss_pos:
         note += (
             "\n\n**보스를 처치했다!** "
-            "여기서 끝내거나 더 둘러볼 수 있다."
+            "**다음 층으로 올라가는 문**이 나타났다."
         )
 
     await interaction.response.edit_message(
@@ -1529,29 +1660,38 @@ async def player_died_background(interaction, session, note):
     await interaction.edit_original_response(embed=embed, view=None)
 
 
-async def end_day(interaction, session):
-    if not session.boss_defeated:
+async def climb_next_floor(interaction, session):
+    if not session.boss_defeated or session.current != session.boss_pos:
         await interaction.response.send_message(
-            "보스를 먼저 처치해야 한다.",
+            "아직 올라갈 수 없다.",
             ephemeral=True,
         )
         return
 
     cancel_cue(session)
     p = db.get_player(session.guild_id, session.user_id)
+    p.floor_number = session.floor_number + 1
     p.last_day = today_key()
-    p.status = "finished"
+    p.status = "playing"
     db.save_player(p)
 
+    new_session = generate_floor(
+        session.guild_id,
+        session.user_id,
+        session.day_key,
+        p.floor_number,
+    )
+    sessions[(session.guild_id, session.user_id)] = new_session
     session.ended = True
 
-    embed = player_embed(p, session, "오늘은 여기까지")
-    embed.description = (
-        f"최종 보유 코인: **{p.coins}**\n"
-        "장비와 자원은 다음 날에도 그대로 유지된다."
+    await interaction.response.edit_message(
+        embed=exploration_embed(
+            p,
+            new_session,
+            f"**{p.floor_number}층 시작!**",
+        ),
+        view=ExploreView(new_session),
     )
-    await interaction.response.edit_message(embed=embed, view=None)
-
 
 
 async def buy_gear(interaction, session, index, price):
@@ -1727,7 +1867,7 @@ async def on_ready():
     print(f"로그인 완료: {bot.user} ({bot.user.id})")
 
 
-@bot.tree.command(name="게임", description="오늘의 층을 시작하거나 이어서 플레이합니다.")
+@bot.tree.command(name="게임", description="오늘의 탐색을 시작하거나 이어서 플레이합니다.")
 async def game(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
@@ -1751,16 +1891,37 @@ async def game(interaction: discord.Interaction):
         )
         return
 
-    if p.last_day == today and p.status == "finished":
+    if p.last_day != today:
+        old = sessions.pop(key, None)
+        if old:
+            cancel_cue(old)
+
+        p.hp = p.max_hp
+        p.last_day = today
+        p.status = "playing"
+        p.floor_number = 1
+        db.save_player(p)
+
+        session = generate_floor(guild_id, user_id, today, 1)
+        sessions[key] = session
+
         await interaction.response.send_message(
-            "오늘은 여기까지다.\n"
-            "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
+            embed=exploration_embed(
+                p,
+                session,
+                "**1층 시작!**",
+            ),
+            view=ExploreView(session),
             ephemeral=True,
         )
         return
 
+    if p.status != "playing":
+        p.status = "playing"
+        db.save_player(p)
+
     old = sessions.get(key)
-    if old and not old.ended:
+    if old and not old.ended and old.day_key == today:
         room = old.room()
 
         if room.kind in ("normal", "boss") and not room.cleared:
@@ -1791,19 +1952,14 @@ async def game(interaction: discord.Interaction):
             )
         return
 
-    p.hp = p.max_hp
-    p.last_day = today
-    p.status = "playing"
-    db.save_player(p)
-
-    session = generate_floor(guild_id, user_id, today)
+    session = generate_floor(guild_id, user_id, today, p.floor_number)
     sessions[key] = session
 
     await interaction.response.send_message(
         embed=exploration_embed(
             p,
             session,
-            "**1층 시작!**",
+            f"**{p.floor_number}층에서 탐색을 이어간다.**",
         ),
         view=ExploreView(session),
         ephemeral=True,
@@ -1833,7 +1989,10 @@ async def status(interaction: discord.Interaction):
     embed.add_field(name="방패", value=p.armor.label(), inline=False)
     embed.add_field(
         name="오늘",
-        value=f"`{p.last_day or '미시작'}` · `{p.status}`",
+        value=(
+            f"`{p.last_day or '미시작'}` · `{p.status}`"
+            + (f" · `{p.floor_number}층`" if p.status == "playing" else "")
+        ),
         inline=False,
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -1865,7 +2024,7 @@ async def leaderboard(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="테스트리셋",
-    description="플레이테스트용: 오늘의 플레이 제한과 현재 층을 초기화합니다.",
+    description="플레이테스트용: 오늘의 플레이 제한과 현재 진행을 초기화합니다.",
 )
 async def test_reset(interaction: discord.Interaction):
     if interaction.guild_id is None:
@@ -1882,7 +2041,7 @@ async def test_reset(interaction: discord.Interaction):
     db.test_reset(interaction.guild_id, interaction.user.id)
 
     await interaction.response.send_message(
-        "테스트 상태를 초기화했습니다. `/게임`으로 새 랜덤 층을 시작할 수 있습니다.\n"
+        "테스트 상태를 초기화했습니다. `/게임`으로 1층부터 다시 시작할 수 있습니다.\n"
         "**무기·방패·코인·폭탄은 유지됩니다.**",
         ephemeral=True,
     )
