@@ -159,6 +159,7 @@ class Room:
     cleared: bool = False
     enemy: Optional[Enemy] = None
     shop_stock: list[Gear] = field(default_factory=list)
+    bomb_stock: int = 0
     slot_uses: int = 0
     slot_broken: bool = False
 
@@ -471,6 +472,7 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
             generate_gear("weapon"),
             generate_gear("armor"),
         ]
+        secret.bomb_stock = random.randint(1, 3)
 
     rooms[secret_pos] = secret
 
@@ -756,7 +758,10 @@ def shop_embed(player, session, note=""):
     for i, gear in enumerate(room.shop_stock[:2], 1):
         price = 6 if gear.kind == "weapon" else 5
         lines.append(f"{i}. `{price}코인` — {gear.label()}")
-    lines.append("3. `3코인` — 폭탄 +1")
+    if room.bomb_stock > 0:
+        lines.append(f"3. `3코인` — 폭탄 +1 · 재고 `{room.bomb_stock}`")
+    else:
+        lines.append("3. **SOLD OUT** — 폭탄")
 
     embed.add_field(
         name="판매 목록",
@@ -1030,10 +1035,10 @@ class ShopView(OwnerView):
             self.add_item(btn)
 
         bomb = discord.ui.Button(
-            label="3코인",
+            label="3코인" if room.bomb_stock > 0 else "SOLD OUT",
             emoji="💣",
             style=discord.ButtonStyle.secondary,
-            disabled=p.coins < 3,
+            disabled=room.bomb_stock <= 0 or p.coins < 3,
         )
 
         async def bomb_callback(interaction):
@@ -1749,7 +1754,15 @@ async def buy_gear(interaction, session, index, price):
 
 
 async def buy_bomb(interaction, session):
+    room = session.room()
     p = db.get_player(session.guild_id, session.user_id)
+
+    if room.bomb_stock <= 0:
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "SOLD OUT"),
+            view=ShopView(session),
+        )
+        return
 
     if p.coins < 3:
         await interaction.response.edit_message(
@@ -1760,10 +1773,17 @@ async def buy_bomb(interaction, session):
 
     p.coins -= 3
     p.bombs += 1
+    room.bomb_stock -= 1
     db.save_player(p)
 
+    note = (
+        "폭탄 **1개**를 구입했다."
+        if room.bomb_stock > 0
+        else "폭탄 **1개**를 구입했다. **SOLD OUT**"
+    )
+
     await interaction.response.edit_message(
-        embed=shop_embed(p, session, "폭탄 **1개**를 구입했다."),
+        embed=shop_embed(p, session, note),
         view=ShopView(session),
     )
 
