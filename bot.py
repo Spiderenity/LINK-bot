@@ -757,12 +757,9 @@ def exploration_embed(player, session, note=""):
         )
         if can_move:
             around.append(f"{DIR_EMOJI[direction]} 문")
-        else:
-            around.append(f"{DIR_EMOJI[direction]} ·")
 
     if crack_here(session):
-        wall_index = ("왼쪽", "위", "아래", "오른쪽").index(session.secret_direction)
-        around[wall_index] = f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**"
+        around.append(f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**")
 
     if session.boss_defeated and session.current == session.boss_pos:
         around.append(f"🪜 **{session.floor_number + 1}층**")
@@ -1323,7 +1320,7 @@ async def timeout_timing(interaction, session, kind, token):
 
     session.phase = "attack"
     await interaction.edit_original_response(
-        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        embed=combat_embed(p, session, note),
         view=CombatView(session, "attack"),
     )
     schedule_cue(interaction, session, "attack")
@@ -1546,7 +1543,7 @@ async def press_timing(interaction, session, kind):
 
         session.phase = "attack"
         await interaction.response.edit_message(
-            embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+            embed=combat_embed(p, session, note),
             view=CombatView(session, "attack"),
         )
         schedule_cue(interaction, session, "attack")
@@ -1585,7 +1582,7 @@ async def press_timing(interaction, session, kind):
 
     session.phase = "attack"
     await interaction.response.edit_message(
-        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        embed=combat_embed(p, session, note),
         view=CombatView(session, "attack"),
     )
     schedule_cue(interaction, session, "attack")
@@ -1676,7 +1673,7 @@ async def try_run(interaction, session):
 
     session.phase = "attack"
     await interaction.response.edit_message(
-        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        embed=combat_embed(p, session, note),
         view=CombatView(session, "attack"),
     )
     schedule_cue(interaction, session, "attack")
@@ -2150,7 +2147,7 @@ async def game(interaction: discord.Interaction):
         embed=exploration_embed(
             p,
             session,
-            f"**{p.floor_number}층에서 탐색을 이어간다.**",
+            f"**{p.floor_number}층 탐색을 재개했다!**",
         ),
         view=ExploreView(session),
         ephemeral=True,
