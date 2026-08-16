@@ -42,9 +42,9 @@ SHAPES = {
     "크랩": {
         "hp": (9, 13),
         "damage": (4, 6),
-        "attack_perfect": 0.75,
+        "attack_perfect": 0.85,
         "attack_good": 1.40,
-        "defend_perfect": 0.80,
+        "defend_perfect": 0.90,
         "defend_good": 1.50,
         "cue_delay": (1.4, 3.0),
         "coin_drop": (2, 4),
@@ -52,9 +52,9 @@ SHAPES = {
     "옥토퍼스": {
         "hp": (7, 11),
         "damage": (3, 5),
-        "attack_perfect": 0.65,
+        "attack_perfect": 0.75,
         "attack_good": 1.25,
-        "defend_perfect": 0.70,
+        "defend_perfect": 0.80,
         "defend_good": 1.30,
         "cue_delay": (1.0, 2.6),
         "coin_drop": (2, 5),
@@ -62,9 +62,9 @@ SHAPES = {
     "스퀴드": {
         "hp": (5, 9),
         "damage": (3, 5),
-        "attack_perfect": 0.55,
+        "attack_perfect": 0.65,
         "attack_good": 1.05,
-        "defend_perfect": 0.60,
+        "defend_perfect": 0.70,
         "defend_good": 1.10,
         "cue_delay": (0.8, 2.2),
         "coin_drop": (3, 5),
@@ -72,9 +72,9 @@ SHAPES = {
     "보스": {
         "hp": (22, 28),
         "damage": (5, 7),
-        "attack_perfect": 0.60,
+        "attack_perfect": 0.70,
         "attack_good": 1.15,
-        "defend_perfect": 0.65,
+        "defend_perfect": 0.75,
         "defend_good": 1.20,
         "cue_delay": (0.9, 2.4),
         "coin_drop": (7, 11),
@@ -672,7 +672,7 @@ def exploration_embed(player, session, note=""):
     if crack_here(session):
         around.append(f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**")
     if session.boss_defeated and session.current == session.boss_pos:
-        around.append("🚪 **다음 층으로 올라가는 문**")
+        around.append(f"🪜 **{session.floor_number + 1}층**")
 
     embed.add_field(
         name="주변",
@@ -683,11 +683,11 @@ def exploration_embed(player, session, note=""):
     if session.boss_defeated:
         if session.current == session.boss_pos:
             embed.set_footer(
-                text="다음 층으로 올라가거나 더 둘러볼 수 있다."
+                text=f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
             )
         else:
             embed.set_footer(
-                text="보스 방에 다음 층으로 올라가는 문이 있다."
+                text=f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
             )
     return embed
 
@@ -883,8 +883,8 @@ class ExploreView(OwnerView):
 
         if session.boss_defeated and session.current == session.boss_pos:
             btn = discord.ui.Button(
-                label="다음 층으로 올라가기",
-                emoji="🚪",
+                label=f"{session.floor_number + 1}층",
+                emoji="🪜",
                 style=discord.ButtonStyle.success,
             )
 
@@ -1612,7 +1612,7 @@ async def show_after_clear(interaction, session, note):
     if session.boss_defeated and session.current == session.boss_pos:
         note += (
             "\n\n**보스를 처치했다!** "
-            "**다음 층으로 올라가는 문**이 나타났다."
+            f"🪜 **{session.floor_number + 1}층**으로 갈 수 있다."
         )
 
     await interaction.response.edit_message(
