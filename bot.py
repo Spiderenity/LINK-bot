@@ -830,10 +830,7 @@ class OwnerView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user.id != self.session.user_id:
-            await interaction.response.send_message(
-                "다른 플레이어의 게임은 조작할 수 없습니다.",
-                ephemeral=True,
-            )
+            await interaction.response.defer()
             return False
         return True
 
@@ -955,7 +952,7 @@ class CombatView(OwnerView):
 
         if enemy and not enemy.boss:
             run = discord.ui.Button(
-                label="포기",
+                label="도주",
                 style=discord.ButtonStyle.secondary,
             )
 
@@ -1340,7 +1337,10 @@ async def break_pot(interaction, session):
 async def open_secret(interaction, session):
     p = db.get_player(session.guild_id, session.user_id)
     if p.bombs <= 0:
-        await interaction.response.send_message("폭탄이 없다.", ephemeral=True)
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "폭탄이 없다."),
+            view=ExploreView(session),
+        )
         return
 
     p.bombs -= 1
@@ -1360,10 +1360,15 @@ async def open_secret(interaction, session):
 async def start_battle(interaction, session):
     enemy = session.room().enemy
     if enemy is None or enemy.hp <= 0:
-        await interaction.response.send_message("싸울 적이 없다.", ephemeral=True)
+        p = db.get_player(session.guild_id, session.user_id)
+        session.phase = "explore"
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "싸울 적이 없다."),
+            view=ExploreView(session),
+        )
         return
     if session.phase != "battle_ready":
-        await interaction.response.send_message("이미 전투 중이다.", ephemeral=True)
+        await interaction.response.defer()
         return
 
     p = db.get_player(session.guild_id, session.user_id)
@@ -1387,7 +1392,7 @@ async def press_timing(interaction, session, kind):
     room = session.room()
     enemy = room.enemy
     if enemy is None or enemy.hp <= 0:
-        await interaction.response.send_message("전투 중이 아닙니다.", ephemeral=True)
+        await interaction.response.defer()
         return
 
     p = db.get_player(session.guild_id, session.user_id)
@@ -1479,10 +1484,15 @@ async def combat_bomb(interaction, session):
     enemy = session.room().enemy
 
     if enemy is None:
-        await interaction.response.send_message("적이 없다.", ephemeral=True)
+        await interaction.response.defer()
         return
     if p.bombs <= 0:
-        await interaction.response.send_message("폭탄이 없다.", ephemeral=True)
+        cancel_cue(session)
+        await interaction.response.edit_message(
+            embed=combat_embed(p, session, "폭탄이 없다."),
+            view=CombatView(session, "attack"),
+        )
+        schedule_cue(interaction, session, "attack")
         return
 
     cancel_cue(session)
@@ -1515,7 +1525,7 @@ async def combat_bomb(interaction, session):
 async def try_run(interaction, session):
     enemy = session.room().enemy
     if enemy is None or enemy.boss:
-        await interaction.response.send_message("보스전에서는 도망칠 수 없다.", ephemeral=True)
+        await interaction.response.defer()
         return
     if session.phase not in ("attack", "defend"):
         await interaction.response.defer()
@@ -1574,7 +1584,7 @@ async def enemy_defeated(interaction, session, combat_note):
 
     p.coins += coins
 
-    bomb_gain = 1 if random.random() < (0.35 if enemy.boss else 0.20) else 0
+    bomb_gain = 1 if random.random() < (0.40 if enemy.boss else 0.25) else 0
     p.bombs += bomb_gain
     db.save_player(p)
 
@@ -1662,9 +1672,10 @@ async def player_died_background(interaction, session, note):
 
 async def climb_next_floor(interaction, session):
     if not session.boss_defeated or session.current != session.boss_pos:
-        await interaction.response.send_message(
-            "아직 올라갈 수 없다.",
-            ephemeral=True,
+        p = db.get_player(session.guild_id, session.user_id)
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "아직 올라갈 수 없다."),
+            view=ExploreView(session),
         )
         return
 
@@ -1699,16 +1710,16 @@ async def buy_gear(interaction, session, index, price):
     p = db.get_player(session.guild_id, session.user_id)
 
     if index >= len(room.shop_stock):
-        await interaction.response.send_message(
-            "이미 팔렸다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "이미 팔렸다."),
+            view=ShopView(session),
         )
         return
 
     if p.coins < price:
-        await interaction.response.send_message(
-            "코인이 부족하다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "코인이 부족하다."),
+            view=ShopView(session),
         )
         return
 
@@ -1736,9 +1747,9 @@ async def buy_bomb(interaction, session):
     p = db.get_player(session.guild_id, session.user_id)
 
     if p.coins < 3:
-        await interaction.response.send_message(
-            "코인이 부족하다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "코인이 부족하다."),
+            view=ShopView(session),
         )
         return
 
@@ -1757,16 +1768,16 @@ async def play_slot(interaction, session):
     p = db.get_player(session.guild_id, session.user_id)
 
     if room.slot_broken:
-        await interaction.response.send_message(
-            "이미 고장 난 기계다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=slot_embed(p, session, "이미 고장 난 기계다."),
+            view=SlotView(session),
         )
         return
 
     if p.coins < 1:
-        await interaction.response.send_message(
-            "코인이 없다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=slot_embed(p, session, "코인이 없다."),
+            view=SlotView(session),
         )
         return
 
@@ -1813,16 +1824,16 @@ async def bomb_slot(interaction, session):
     p = db.get_player(session.guild_id, session.user_id)
 
     if room.slot_broken:
-        await interaction.response.send_message(
-            "이미 고장 난 기계다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=slot_embed(p, session, "이미 고장 난 기계다."),
+            view=SlotView(session),
         )
         return
 
     if p.bombs < 1:
-        await interaction.response.send_message(
-            "폭탄이 없다.",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            embed=slot_embed(p, session, "폭탄이 없다."),
+            view=SlotView(session),
         )
         return
 
