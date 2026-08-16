@@ -17,9 +17,6 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 
-# ============================================================
-# 설정
-# ============================================================
 
 load_dotenv()
 
@@ -30,55 +27,74 @@ DB_PATH = Path(__file__).with_name("game.db")
 
 COLORS = ("시안", "마젠타", "옐로")
 COLOR_MARK = {"시안": "C", "마젠타": "M", "옐로": "Y"}
+EMBED_COLORS = {
+    "시안": 0x00DDE0,
+    "마젠타": 0xF000B8,
+    "옐로": 0xF4D800,
+}
+DIR_EMOJI = {"위": "⬆️", "오른쪽": "➡️", "아래": "⬇️", "왼쪽": "⬅️"}
+RUN_SUCCESS_RATE = 0.65
 
-# 모양 자체가 공격 템포를 결정합니다.
+NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
+
 SHAPES = {
-    "정육면체": {
-        "symbol": "■",
+    "크랩": {
         "hp": (9, 13),
         "damage": (4, 6),
         "attack_perfect": 0.58,
         "attack_good": 1.12,
-        "dodge_perfect": 0.62,
-        "dodge_good": 1.20,
+        "defend_perfect": 0.62,
+        "defend_good": 1.20,
         "cue_delay": (1.4, 3.0),
         "coin_drop": (2, 4),
     },
-    "원기둥": {
-        "symbol": "▣",
+    "옥토퍼스": {
         "hp": (7, 11),
         "damage": (3, 5),
         "attack_perfect": 0.46,
         "attack_good": 0.92,
-        "dodge_perfect": 0.50,
-        "dodge_good": 0.96,
+        "defend_perfect": 0.50,
+        "defend_good": 0.96,
         "cue_delay": (1.0, 2.6),
         "coin_drop": (2, 5),
     },
-    "원뿔": {
-        "symbol": "▲",
+    "스퀴드": {
         "hp": (5, 9),
         "damage": (3, 5),
         "attack_perfect": 0.36,
         "attack_good": 0.76,
-        "dodge_perfect": 0.38,
-        "dodge_good": 0.80,
+        "defend_perfect": 0.38,
+        "defend_good": 0.80,
         "cue_delay": (0.8, 2.2),
         "coin_drop": (3, 5),
+    },
+    "보스": {
+        "hp": (22, 28),
+        "damage": (5, 7),
+        "attack_perfect": 0.42,
+        "attack_good": 0.86,
+        "defend_perfect": 0.44,
+        "defend_good": 0.90,
+        "cue_delay": (0.9, 2.4),
+        "coin_drop": (7, 11),
     },
 }
 
 DIRECTIONS = {
-    "북": (0, -1),
-    "동": (1, 0),
-    "남": (0, 1),
-    "서": (-1, 0),
+    "위": (0, -1),
+    "오른쪽": (1, 0),
+    "아래": (0, 1),
+    "왼쪽": (-1, 0),
+}
+
+ASCII_ART = {
+    "보스": '░░░░░░░░░░░░░░░░░░\n░░░░░▄▄████▄▄░░░░░\n░░░▄██████████▄░░░\n░▄██▄██▄██▄██▄██▄░\n░░░▀█▀░░▀▀░░▀█▀░░░\n░░░░░░░░░░░░░░░░░░\n░░░░░░░░░░░░░░░░░░',
+    "크랩": '░░░░░░░░░░░░░░░░░\n░░░░░▀▄░░░▄▀░░░░░\n░░░░▄█▀███▀█▄░░░░\n░░░█▀███████▀█░░░\n░░░█░█▀▀▀▀▀█░█░░░\n░░░░░░▀▀░▀▀░░░░░░\n░░░░░░░░░░░░░░░░░',
+    "옥토퍼스": '░░░░░░░░░░░░░░░░░\n░░░░▄▄████▄▄░░░░░\n░░░██████████░░░░\n░░░██▄▄██▄▄██░░░░\n░░░░▄▀▄▀▀▄▀▄░░░░░\n░░░▀░░░░░░░░▀░░░░\n░░░░░░░░░░░░░░░░░',
+    "스퀴드": '░░░░░░░░░░░░░░░░░\n░░░░░░▄██▄░░░░░░░\n░░░░▄██████▄░░░░░\n░░░███▄██▄███░░░░\n░░░░░▄▀▄▄▀▄░░░░░░\n░░░░▀░▀░░▀░▀░░░░░\n░░░░░░░░░░░░░░░░░',
 }
 
 
-# ============================================================
-# 데이터
-# ============================================================
 
 @dataclass
 class Gear:
@@ -113,10 +129,10 @@ class Gear:
 
 
 START_WEAPON = Gear(
-    "weapon", "기본 해머", 4, {"시안": 1, "마젠타": 0, "옐로": 0}
+    "weapon", "유리 파편", 4, {"시안": 1, "마젠타": 0, "옐로": 0}
 )
 START_ARMOR = Gear(
-    "armor", "기본 보호구", 1, {"시안": 0, "마젠타": 1, "옐로": 0}
+    "armor", "화물 상자 뚜껑", 1, {"시안": 0, "마젠타": 1, "옐로": 0}
 )
 
 
@@ -130,8 +146,8 @@ class Enemy:
     boss: bool = False
 
     @property
-    def symbol(self) -> str:
-        return SHAPES[self.shape]["symbol"]
+    def art(self) -> str:
+        return ASCII_ART[self.shape]
 
 
 @dataclass
@@ -174,17 +190,18 @@ class GameSession:
     secret_revealed: bool = False
     boss_defeated: bool = False
     ended: bool = False
-    phase: str = "explore"  # explore/player_turn/enemy_turn/timing_wait
+    phase: str = "explore"  # explore/battle_ready/attack/defend
+    previous: Optional[Tuple[int, int]] = None
     cue_started: Optional[float] = None
     cue_kind: Optional[str] = None
+    cue_state: str = "idle"  # idle/waiting/fake/real
+    cue_token: int = 0
+    cue_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
     def room(self) -> Room:
         return self.rooms[self.current]
 
 
-# ============================================================
-# DB
-# ============================================================
 
 class Database:
     def __init__(self, path: Path):
@@ -306,9 +323,6 @@ db = Database(DB_PATH)
 sessions: Dict[Tuple[int, int], GameSession] = {}
 
 
-# ============================================================
-# 랜덤 생성
-# ============================================================
 
 def today_key() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
@@ -328,10 +342,22 @@ def random_affinity(min_points=1, max_points=3):
 
 def generate_gear(kind: str, boss_drop=False) -> Gear:
     if kind == "weapon":
-        names = ["절단기", "충격봉", "압축 해머", "펄스 블레이드"]
+        names = [
+            "유리 파편",
+            "금속 파이프",
+            "깨진 칼날",
+            "고장 난 절단기",
+            "비상 신호총",
+        ]
         power = random.randint(5, 7 if not boss_drop else 9)
     else:
-        names = ["충격 조끼", "반응 장갑", "복합 장갑", "공진 보호구"]
+        names = [
+            "화물 상자 뚜껑",
+            "기계 덮개",
+            "깨진 방탄유리",
+            "비상문 조각",
+            "금 간 방패",
+        ]
         power = random.randint(1, 3 if not boss_drop else 4)
 
     return Gear(
@@ -346,16 +372,12 @@ def generate_gear(kind: str, boss_drop=False) -> Gear:
 
 
 def make_enemy(boss=False) -> Enemy:
-    shape = random.choice(tuple(SHAPES))
+    shape = "보스" if boss else random.choice(NORMAL_ENEMIES)
     color = random.choice(COLORS)
     spec = SHAPES[shape]
 
     hp = random.randint(*spec["hp"])
     damage = random.randint(*spec["damage"])
-
-    if boss:
-        hp = round(hp * random.uniform(2.2, 2.7))
-        damage += random.randint(1, 2)
 
     return Enemy(shape, color, hp, hp, damage, boss)
 
@@ -377,7 +399,6 @@ def bfs_distances(positions, start=(0, 0)):
 
 
 def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
-    # 시작방 포함 공개 방 8개.
     positions = {(0, 0)}
     while len(positions) < 8:
         anchor = random.choice(tuple(positions))
@@ -395,10 +416,8 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
         elif pos == boss_pos:
             rooms[pos] = Room(pos, "boss", enemy=make_enemy(True))
         else:
-            # 적은 방마다 독립적으로 랜덤 생성
             rooms[pos] = Room(pos, "normal", enemy=make_enemy(False))
 
-    # 빈 인접칸 하나를 비밀방으로 선택
     candidates = []
     for source in positions:
         if source == boss_pos:
@@ -413,7 +432,6 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
 
     secret = Room(secret_pos, secret_kind)
     if secret_kind == "shop":
-        # 상점 장비도 매 층 랜덤
         secret.shop_stock = [
             generate_gear("weapon"),
             generate_gear("armor"),
@@ -434,9 +452,6 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
     )
 
 
-# ============================================================
-# 계산
-# ============================================================
 
 def hp_bar(current: int, maximum: int, width=10):
     filled = round(width * max(0, current) / max(1, maximum))
@@ -448,7 +463,9 @@ def affinity(gear: Gear, color: str) -> int:
 
 
 def attack_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
-    timing_mult = {"PERFECT": 1.40, "GOOD": 1.0, "MISS": 0.30}[grade]
+    if grade == "MISS":
+        return 0
+    timing_mult = {"PERFECT": 1.40, "GOOD": 1.0}[grade]
     color_mult = 1.0 + 0.25 * affinity(player.weapon, enemy.color)
     return max(1, round(player.weapon.power * timing_mult * color_mult))
 
@@ -472,9 +489,8 @@ def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
     if kind == "attack":
         return spec["attack_perfect"], spec["attack_good"]
 
-    # 해당 색에 강한 방어구일수록 회피 허용 시간이 약간 늘어남
     extra = 0.05 * affinity(player.armor, enemy.color)
-    return spec["dodge_perfect"] + extra, spec["dodge_good"] + extra
+    return spec["defend_perfect"] + extra, spec["defend_good"] + extra
 
 
 def timing_grade(seconds: float, perfect: float, good: float):
@@ -553,8 +569,8 @@ def map_ascii(session: GameSession):
 
     for pos in visible:
         x, y = cv(pos)
-        east = add_pos(pos, DIRECTIONS["동"])
-        south = add_pos(pos, DIRECTIONS["남"])
+        east = add_pos(pos, DIRECTIONS["오른쪽"])
+        south = add_pos(pos, DIRECTIONS["아래"])
 
         if east in visible:
             ex, _ = cv(east)
@@ -568,12 +584,9 @@ def map_ascii(session: GameSession):
     return "\n".join("".join(row).rstrip() for row in canvas)
 
 
-# ============================================================
-# Embed
-# ============================================================
 
-def player_embed(player: PlayerState, session: GameSession, title: str):
-    embed = discord.Embed(title=title)
+def player_embed(player: PlayerState, session: GameSession, title: str, colour=None):
+    embed = discord.Embed(title=title, colour=colour)
     embed.add_field(
         name="상태",
         value=(
@@ -583,7 +596,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str):
         inline=False,
     )
     embed.add_field(name="무기", value=player.weapon.label(), inline=False)
-    embed.add_field(name="방어구", value=player.armor.label(), inline=False)
+    embed.add_field(name="방패", value=player.armor.label(), inline=False)
     return embed
 
 
@@ -597,24 +610,24 @@ def exploration_embed(player, session, note=""):
         name="맵",
         value=(
             f"```text\n{map_ascii(session)}\n```\n"
-            "`@` 현재 · `·` 클리어 · `?` 미탐색 · `B` 보스 · `S` 비밀"
+            "`@` 현재 · `·` 클리어 · `?` 미탐색 · `B` 보스 · `S` 비밀방"
         ),
         inline=False,
     )
 
-    around = [f"{direction}: 문" for direction, _ in accessible_directions(session)]
+    around = [f"{DIR_EMOJI[direction]} 문" for direction, _ in accessible_directions(session)]
     if crack_here(session):
-        around.append(f"{session.secret_direction}: **금이 간 벽**")
+        around.append(f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**")
 
     embed.add_field(
         name="주변",
-        value="\n".join(around) if around else "막다른 방입니다.",
+        value="\n".join(around) if around else "막다른 방이다.",
         inline=False,
     )
 
     if session.boss_defeated:
         embed.set_footer(
-            text="보스를 처치했습니다. 오늘을 끝내거나 남은 방을 더 탐색할 수 있습니다."
+            text="보스를 처치했다! 여기서 끝내거나 더 탐색할 수 있다."
         )
     return embed
 
@@ -623,14 +636,24 @@ def combat_embed(player, session, note=""):
     enemy = session.room().enemy
     assert enemy is not None
 
-    prefix = "보스 " if enemy.boss else ""
+    title = (
+        f"{enemy.color} 보스"
+        if enemy.boss
+        else f"{enemy.color} {enemy.shape}"
+    )
     embed = player_embed(
         player,
         session,
-        f"{prefix}{enemy.color} {enemy.shape} {enemy.symbol}",
+        title,
+        colour=EMBED_COLORS[enemy.color],
     )
     if note:
         embed.description = note
+    embed.add_field(
+        name="형태",
+        value=f"```text\n{enemy.art}\n```",
+        inline=False,
+    )
     embed.add_field(
         name="적",
         value=(
@@ -638,25 +661,6 @@ def combat_embed(player, session, note=""):
             f"{hp_bar(max(0, enemy.hp), enemy.max_hp)}\n"
             f"공격력 `{enemy.damage}`"
         ),
-        inline=False,
-    )
-    return embed
-
-
-def timing_embed(player, session, kind):
-    enemy = session.room().enemy
-    assert enemy is not None
-    action = "공격" if kind == "attack" else "회피"
-
-    embed = combat_embed(
-        player,
-        session,
-        f"## 지금! — {action} 버튼을 누르세요.",
-    )
-    perfect, good = timing_windows(player, enemy, kind)
-    embed.add_field(
-        name="현재 판정창",
-        value=f"PERFECT ≤ `{perfect:.2f}s` · GOOD ≤ `{good:.2f}s`",
         inline=False,
     )
     return embed
@@ -679,19 +683,18 @@ def shop_embed(player, session, note=""):
         value="\n".join(lines),
         inline=False,
     )
-    embed.set_footer(text="코인이 곧 순위이므로 구매하면 점수판의 코인 수도 줄어듭니다.")
     return embed
 
 
 def slot_embed(player, session, note=""):
     room = session.room()
-    embed = player_embed(player, session, "슬롯머신")
+    embed = player_embed(player, session, "🎰 슬롯머신")
     if note:
         embed.description = note
     embed.add_field(
         name="기계",
         value=(
-            f"상태: **{'고장남' if room.slot_broken else '작동 중'}**\n"
+            f"상태: **{'고장' if room.slot_broken else '작동 중'}**\n"
             f"사용 횟수: `{room.slot_uses}`\n"
             "1회 비용: `1코인`"
         ),
@@ -700,9 +703,45 @@ def slot_embed(player, session, note=""):
     return embed
 
 
-# ============================================================
-# Views
-# ============================================================
+ATTACK_FLAVOR = [
+    "아직인가...",
+    "좀만 더 보자...",
+    "가만히 있네...",
+    "타이밍 잡기 어렵네...",
+    "계속 지켜보자...",
+]
+ATTACK_FAKEOUT = [
+    "**💥 앗!!! 멀쩡히 서 있다!!!**",
+    "**💥 앗!!! 이쪽을 쳐다본다!!!**",
+    "**💥 앗!!! 괜히 한 바퀴 돌았다!!!**",
+    "**💥 앗!!! 아무 일도 없었다!!!**",
+]
+ATTACK_REAL = [
+    "**💥 앗!!! 지금이야!!!**",
+    "**💥 앗!!! 기회다!!!**",
+]
+
+DEFEND_FLAVOR = [
+    "아직인가...",
+    "언제 치려나...",
+    "좀만 더 보자...",
+    "가만히 있네...",
+    "뭘 하려는 거지...",
+    "계속 지켜보자...",
+]
+DEFEND_FAKEOUT = [
+    "**💥 앗!!! 아무 일도 없다!!!**",
+    "**💥 앗!!! 그냥 쳐다본다!!!**",
+    "**💥 앗!!! 가만히 서 있다!!!**",
+    "**💥 앗!!! 괜히 움직였다!!!**",
+    "**💥 앗!!! 다시 멈춰 섰다!!!**",
+    "**💥 앗!!! 그냥 지나간다!!!**",
+]
+DEFEND_REAL = [
+    "**💥 앗!!! 공격한다!!!**",
+    "**💥 앗!!! 지금 막아!!!**",
+]
+
 
 class OwnerView(discord.ui.View):
     def __init__(self, session: GameSession, timeout=300):
@@ -712,7 +751,7 @@ class OwnerView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user.id != self.session.user_id:
             await interaction.response.send_message(
-                "다른 플레이어의 게임에는 조작할 수 없습니다.",
+                "다른 플레이어의 게임은 조작할 수 없습니다.",
                 ephemeral=True,
             )
             return False
@@ -725,7 +764,7 @@ class ExploreView(OwnerView):
 
         for direction, target in accessible_directions(session):
             btn = discord.ui.Button(
-                label=direction,
+                emoji=DIR_EMOJI[direction],
                 style=discord.ButtonStyle.primary,
             )
 
@@ -737,7 +776,8 @@ class ExploreView(OwnerView):
 
         if crack_here(session):
             btn = discord.ui.Button(
-                label=f"폭탄으로 {session.secret_direction} 벽 파괴",
+                label=f"{DIR_EMOJI[session.secret_direction]} 벽 파괴",
+                emoji="💣",
                 style=discord.ButtonStyle.danger,
             )
 
@@ -749,7 +789,8 @@ class ExploreView(OwnerView):
 
         if session.boss_defeated:
             btn = discord.ui.Button(
-                label="오늘 종료",
+                label="오늘은 여기까지",
+                emoji="✅",
                 style=discord.ButtonStyle.success,
             )
 
@@ -760,69 +801,75 @@ class ExploreView(OwnerView):
             self.add_item(btn)
 
 
-class AttackView(OwnerView):
+class BattleStartView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
-        p = db.get_player(session.guild_id, session.user_id)
-
-        attack = discord.ui.Button(
-            label="공격 준비",
+        btn = discord.ui.Button(
+            label="전투 시작",
+            emoji="⚔️",
             style=discord.ButtonStyle.danger,
         )
 
-        async def attack_callback(interaction):
-            await prepare_timing(interaction, self.session, "attack")
-
-        attack.callback = attack_callback
-        self.add_item(attack)
-
-        bomb = discord.ui.Button(
-            label=f"폭탄 사용 ({p.bombs})",
-            style=discord.ButtonStyle.secondary,
-            disabled=p.bombs <= 0,
-        )
-
-        async def bomb_callback(interaction):
-            await combat_bomb(interaction, self.session)
-
-        bomb.callback = bomb_callback
-        self.add_item(bomb)
-
-
-class DodgeView(OwnerView):
-    def __init__(self, session):
-        super().__init__(session)
-
-        btn = discord.ui.Button(
-            label="회피 준비",
-            style=discord.ButtonStyle.primary,
-        )
-
         async def callback(interaction):
-            await prepare_timing(interaction, self.session, "dodge")
+            await start_battle(interaction, self.session)
 
         btn.callback = callback
         self.add_item(btn)
 
 
-class CueView(OwnerView):
+class CombatView(OwnerView):
     def __init__(self, session, kind):
-        super().__init__(session, timeout=60)
+        super().__init__(session)
+        p = db.get_player(session.guild_id, session.user_id)
+        enemy = session.room().enemy
 
-        btn = discord.ui.Button(
-            label="공격!" if kind == "attack" else "회피!",
-            style=(
-                discord.ButtonStyle.danger
-                if kind == "attack"
-                else discord.ButtonStyle.success
-            ),
-        )
+        if kind == "attack":
+            attack = discord.ui.Button(
+                emoji="⚔️",
+                style=discord.ButtonStyle.danger,
+            )
 
-        async def callback(interaction):
-            await resolve_timing(interaction, self.session, kind)
+            async def attack_callback(interaction):
+                await press_timing(interaction, self.session, "attack")
 
-        btn.callback = callback
-        self.add_item(btn)
+            attack.callback = attack_callback
+            self.add_item(attack)
+
+            bomb = discord.ui.Button(
+                emoji="💣",
+                style=discord.ButtonStyle.secondary,
+                disabled=p.bombs <= 0,
+            )
+
+            async def bomb_callback(interaction):
+                await combat_bomb(interaction, self.session)
+
+            bomb.callback = bomb_callback
+            self.add_item(bomb)
+
+        else:
+            shield = discord.ui.Button(
+                emoji="🛡️",
+                style=discord.ButtonStyle.success,
+            )
+
+            async def shield_callback(interaction):
+                await press_timing(interaction, self.session, "defend")
+
+            shield.callback = shield_callback
+            self.add_item(shield)
+
+        if enemy and not enemy.boss:
+            run = discord.ui.Button(
+                label="포기",
+                style=discord.ButtonStyle.secondary,
+            )
+
+            async def run_callback(interaction):
+                await try_run(interaction, self.session)
+
+            run.callback = run_callback
+            self.add_item(run)
 
 
 class LootView(OwnerView):
@@ -832,10 +879,12 @@ class LootView(OwnerView):
 
         equip = discord.ui.Button(
             label="장착",
+            emoji="✅",
             style=discord.ButtonStyle.success,
         )
         skip = discord.ui.Button(
             label="버리기",
+            emoji="🗑️",
             style=discord.ButtonStyle.secondary,
         )
 
@@ -849,14 +898,14 @@ class LootView(OwnerView):
             await show_after_clear(
                 interaction,
                 session,
-                f"**{gear.name}**을(를) 장착했습니다.",
+                f"**{gear.name}** 장착 완료.",
             )
 
         async def skip_callback(interaction):
             await show_after_clear(
                 interaction,
                 session,
-                "새 장비를 버렸습니다.",
+                "새 장비를 버렸다.",
             )
 
         equip.callback = equip_callback
@@ -874,7 +923,7 @@ class ShopView(OwnerView):
         for index, gear in enumerate(room.shop_stock[:2]):
             price = 6 if gear.kind == "weapon" else 5
             btn = discord.ui.Button(
-                label=f"{index + 1}번 구매 ({price})",
+                label=f"{index + 1}번 ({price})",
                 style=discord.ButtonStyle.success,
                 disabled=p.coins < price,
             )
@@ -886,7 +935,8 @@ class ShopView(OwnerView):
             self.add_item(btn)
 
         bomb = discord.ui.Button(
-            label="폭탄 구매 (3)",
+            label="3코인",
+            emoji="💣",
             style=discord.ButtonStyle.secondary,
             disabled=p.coins < 3,
         )
@@ -898,14 +948,14 @@ class ShopView(OwnerView):
         self.add_item(bomb)
 
         leave = discord.ui.Button(
-            label="나가기",
+            emoji="↩️",
             style=discord.ButtonStyle.primary,
         )
 
         async def leave_callback(interaction):
             p2 = db.get_player(session.guild_id, session.user_id)
             await interaction.response.edit_message(
-                embed=exploration_embed(p2, session, "상점을 나왔습니다."),
+                embed=exploration_embed(p2, session, "상점을 나왔다."),
                 view=ExploreView(session),
             )
 
@@ -920,7 +970,8 @@ class SlotView(OwnerView):
         p = db.get_player(session.guild_id, session.user_id)
 
         play = discord.ui.Button(
-            label="1코인 넣기",
+            label="1코인",
+            emoji="🎰",
             style=discord.ButtonStyle.success,
             disabled=room.slot_broken or p.coins < 1,
         )
@@ -932,7 +983,7 @@ class SlotView(OwnerView):
         self.add_item(play)
 
         bomb = discord.ui.Button(
-            label=f"폭탄으로 부수기 ({p.bombs})",
+            emoji="💣",
             style=discord.ButtonStyle.danger,
             disabled=room.slot_broken or p.bombs < 1,
         )
@@ -944,14 +995,14 @@ class SlotView(OwnerView):
         self.add_item(bomb)
 
         leave = discord.ui.Button(
-            label="나가기",
+            emoji="↩️",
             style=discord.ButtonStyle.primary,
         )
 
         async def leave_callback(interaction):
             p2 = db.get_player(session.guild_id, session.user_id)
             await interaction.response.edit_message(
-                embed=exploration_embed(p2, session, "슬롯머신 방을 나왔습니다."),
+                embed=exploration_embed(p2, session, "슬롯머신 방을 나왔다."),
                 view=ExploreView(session),
             )
 
@@ -959,32 +1010,144 @@ class SlotView(OwnerView):
         self.add_item(leave)
 
 
-# ============================================================
-# 게임 액션
-# ============================================================
+
+def cancel_cue(session: GameSession):
+    session.cue_token += 1
+    session.cue_state = "idle"
+    session.cue_kind = None
+    session.cue_started = None
+    task = session.cue_task
+    session.cue_task = None
+    if task and not task.done() and task is not asyncio.current_task():
+        task.cancel()
+
+
+def schedule_cue(interaction: discord.Interaction, session: GameSession, kind: str):
+    cancel_cue(session)
+    session.phase = kind
+    session.cue_kind = kind
+    session.cue_state = "waiting"
+    token = session.cue_token
+    session.cue_task = asyncio.create_task(cue_sequence(interaction, session, kind, token))
+
+
+async def cue_sequence(interaction, session, kind, token):
+    enemy = session.room().enemy
+    if enemy is None:
+        return
+
+    flavor = ATTACK_FLAVOR if kind == "attack" else DEFEND_FLAVOR
+    fakeouts = ATTACK_FAKEOUT if kind == "attack" else DEFEND_FAKEOUT
+    real_cues = ATTACK_REAL if kind == "attack" else DEFEND_REAL
+
+    try:
+        for _ in range(random.randint(1, 3)):
+            await asyncio.sleep(random.uniform(0.65, 1.35))
+            if session.cue_token != token or session.ended or session.phase != kind:
+                return
+
+            is_fake = random.random() < 0.48
+            session.cue_state = "fake" if is_fake else "waiting"
+            line = random.choice(fakeouts if is_fake else flavor)
+            p = db.get_player(session.guild_id, session.user_id)
+            await interaction.edit_original_response(
+                embed=combat_embed(p, session, line),
+                view=CombatView(session, kind),
+            )
+
+        spec = SHAPES[enemy.shape]
+        low, high = spec["cue_delay"]
+        await asyncio.sleep(random.uniform(max(0.45, low * 0.35), max(0.85, high * 0.45)))
+        if session.cue_token != token or session.ended or session.phase != kind:
+            return
+
+        p = db.get_player(session.guild_id, session.user_id)
+        await interaction.edit_original_response(
+            embed=combat_embed(p, session, random.choice(real_cues)),
+            view=CombatView(session, kind),
+        )
+        session.cue_state = "real"
+        session.cue_started = time.monotonic()
+
+        perfect, good = timing_windows(p, enemy, kind)
+        await asyncio.sleep(good + 0.20)
+        if (
+            session.cue_token == token
+            and session.phase == kind
+            and session.cue_state == "real"
+        ):
+            await timeout_timing(interaction, session, kind, token)
+    except asyncio.CancelledError:
+        return
+    except discord.HTTPException:
+        if session.cue_token == token:
+            session.phase = "battle_ready"
+            session.cue_state = "idle"
+
+
+async def timeout_timing(interaction, session, kind, token):
+    if session.cue_token != token:
+        return
+
+    session.cue_state = "idle"
+    session.cue_kind = None
+    session.cue_started = None
+    p = db.get_player(session.guild_id, session.user_id)
+    enemy = session.room().enemy
+    if enemy is None:
+        return
+
+    if kind == "attack":
+        note = "**MISS!** 늦었다."
+        session.phase = "defend"
+        await interaction.edit_original_response(
+            embed=combat_embed(p, session, note + "\n\n적이 이쪽을 노린다."),
+            view=CombatView(session, "defend"),
+        )
+        schedule_cue(interaction, session, "defend")
+        return
+
+    damage = incoming_damage(p, enemy, "MISS")
+    p.hp = max(0, p.hp - damage)
+    db.save_player(p)
+    note = f"**MISS!** 늦었다. **{damage} 피해**."
+
+    if p.hp <= 0:
+        await player_died_background(interaction, session, note)
+        return
+
+    session.phase = "attack"
+    await interaction.edit_original_response(
+        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        view=CombatView(session, "attack"),
+    )
+    schedule_cue(interaction, session, "attack")
+
 
 async def move_player(interaction, session, direction, target):
     if session.ended:
         await interaction.response.send_message(
-            "오늘의 게임은 이미 끝났습니다.",
+            "오늘은 여기까지다.",
             ephemeral=True,
         )
         return
 
+    cancel_cue(session)
+    session.previous = session.current
     session.current = target
     room = session.room()
     room.visited = True
     p = db.get_player(session.guild_id, session.user_id)
 
     if room.kind in ("normal", "boss") and not room.cleared:
-        session.phase = "player_turn"
+        session.phase = "battle_ready"
         await interaction.response.edit_message(
             embed=combat_embed(
                 p,
                 session,
-                f"**{room.enemy.color} {room.enemy.shape}**이(가) 나타났습니다.",
+                f"**{room.enemy.color} {room.enemy.shape}**이(가) 나타났다!",
             ),
-            view=AttackView(session),
+            view=BattleStartView(session),
         )
         return
 
@@ -1002,6 +1165,7 @@ async def move_player(interaction, session, direction, target):
         )
         return
 
+    session.phase = "explore"
     await interaction.response.edit_message(
         embed=exploration_embed(p, session),
         view=ExploreView(session),
@@ -1011,7 +1175,7 @@ async def move_player(interaction, session, direction, target):
 async def open_secret(interaction, session):
     p = db.get_player(session.guild_id, session.user_id)
     if p.bombs <= 0:
-        await interaction.response.send_message("폭탄이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("폭탄이 없다.", ephemeral=True)
         return
 
     p.bombs -= 1
@@ -1022,122 +1186,129 @@ async def open_secret(interaction, session):
         embed=exploration_embed(
             p,
             session,
-            f"폭탄으로 **{session.secret_direction}쪽 금이 간 벽**을 열었습니다.",
+            f"💣 {DIR_EMOJI[session.secret_direction]} **금이 간 벽을 부쉈다.**",
         ),
         view=ExploreView(session),
     )
 
 
-async def prepare_timing(interaction, session, kind):
+async def start_battle(interaction, session):
     enemy = session.room().enemy
     if enemy is None or enemy.hp <= 0:
-        await interaction.response.send_message(
-            "현재 전투 중이 아닙니다.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("싸울 적이 없다.", ephemeral=True)
         return
-
-    expected = "player_turn" if kind == "attack" else "enemy_turn"
-    if session.phase != expected:
-        await interaction.response.send_message(
-            "지금 사용할 수 없는 행동입니다.",
-            ephemeral=True,
-        )
+    if session.phase != "battle_ready":
+        await interaction.response.send_message("이미 전투 중이다.", ephemeral=True)
         return
 
     p = db.get_player(session.guild_id, session.user_id)
-    action = "공격" if kind == "attack" else "회피"
-
-    session.phase = "timing_wait"
-    session.cue_kind = kind
-    session.cue_started = None
-
-    # 먼저 즉시 응답한 뒤 랜덤 대기.
+    session.phase = "attack"
     await interaction.response.edit_message(
         embed=combat_embed(
             p,
             session,
-            f"**{action} 준비...**\n버튼이 나타날 때까지 기다리세요.",
+            "**전투 시작!**\n신호를 잘 보고 누르세요.",
         ),
-        view=None,
+        view=CombatView(session, "attack"),
     )
-
-    spec = SHAPES[enemy.shape]
-    await asyncio.sleep(random.uniform(*spec["cue_delay"]))
-
-    try:
-        # Discord가 메시지 편집을 받아들인 직후를 타이밍 시작점으로 사용.
-        await interaction.edit_original_response(
-            embed=timing_embed(p, session, kind),
-            view=CueView(session, kind),
-        )
-        session.cue_started = time.monotonic()
-    except discord.HTTPException:
-        session.phase = expected
-        session.cue_kind = None
+    schedule_cue(interaction, session, "attack")
 
 
-async def resolve_timing(interaction, session, kind):
-    if (
-        session.phase != "timing_wait"
-        or session.cue_kind != kind
-        or session.cue_started is None
-    ):
-        await interaction.response.send_message(
-            "이미 끝난 판정입니다.",
-            ephemeral=True,
-        )
+async def press_timing(interaction, session, kind):
+    if session.phase != kind or session.cue_kind != kind:
+        await interaction.response.send_message("지금은 사용할 수 없다.", ephemeral=True)
         return
-
-    elapsed = time.monotonic() - session.cue_started
-    session.cue_started = None
-    session.cue_kind = None
 
     room = session.room()
     enemy = room.enemy
-    assert enemy is not None
-    p = db.get_player(session.guild_id, session.user_id)
+    if enemy is None or enemy.hp <= 0:
+        await interaction.response.send_message("전투 중이 아닙니다.", ephemeral=True)
+        return
 
+    p = db.get_player(session.guild_id, session.user_id)
+    state = session.cue_state
+
+    if state != "real" or session.cue_started is None:
+        cancel_cue(session)
+        bait = state == "fake"
+
+        if kind == "attack":
+            note = (
+                "**MISS!** 페이크였다."
+                if bait
+                else "**MISS!** 너무 빨랐다."
+            )
+            session.phase = "defend"
+            await interaction.response.edit_message(
+                embed=combat_embed(p, session, note + "\n\n적이 반격한다."),
+                view=CombatView(session, "defend"),
+            )
+            schedule_cue(interaction, session, "defend")
+            return
+
+        damage = incoming_damage(p, enemy, "MISS")
+        p.hp = max(0, p.hp - damage)
+        db.save_player(p)
+        note = (
+            f"**MISS!** 페이크였다. **{damage} 피해**."
+            if bait
+            else f"**MISS!** 너무 빨랐다. **{damage} 피해**."
+        )
+        if p.hp <= 0:
+            await player_died(interaction, session, note)
+            return
+
+        session.phase = "attack"
+        await interaction.response.edit_message(
+            embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+            view=CombatView(session, "attack"),
+        )
+        schedule_cue(interaction, session, "attack")
+        return
+
+    elapsed = time.monotonic() - session.cue_started
     perfect, good = timing_windows(p, enemy, kind)
     grade = timing_grade(elapsed, perfect, good)
+    cancel_cue(session)
 
     if kind == "attack":
         damage = attack_damage(p, enemy, grade)
         enemy.hp -= damage
-        note = f"**{grade}** · `{elapsed:.2f}s`\n적에게 **{damage} 피해**."
+        note = f"**{grade}** · `{elapsed:.2f}초` — 적에게 **{damage} 피해**."
 
         if enemy.hp <= 0:
             await enemy_defeated(interaction, session, note)
             return
 
-        session.phase = "enemy_turn"
+        session.phase = "defend"
         await interaction.response.edit_message(
-            embed=combat_embed(p, session, note + "\n\n적이 반격합니다."),
-            view=DodgeView(session),
+            embed=combat_embed(p, session, note + "\n\n적이 반격한다."),
+            view=CombatView(session, "defend"),
         )
+        schedule_cue(interaction, session, "defend")
         return
 
     damage = incoming_damage(p, enemy, grade)
     p.hp = max(0, p.hp - damage)
     db.save_player(p)
-
-    note = f"**{grade}** · `{elapsed:.2f}s`\n받은 피해: **{damage}**"
+    note = f"**{grade}** · `{elapsed:.2f}초` — 받은 피해 **{damage}**."
 
     if p.hp <= 0:
         await player_died(interaction, session, note)
         return
 
-    session.phase = "player_turn"
+    session.phase = "attack"
     await interaction.response.edit_message(
-        embed=combat_embed(p, session, note + "\n\n공격할 차례입니다."),
-        view=AttackView(session),
+        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        view=CombatView(session, "attack"),
     )
+    schedule_cue(interaction, session, "attack")
 
 
 async def combat_bomb(interaction, session):
-    if session.phase != "player_turn":
+    if session.phase != "attack":
         await interaction.response.send_message(
-            "지금은 폭탄을 사용할 수 없습니다.",
+            "지금은 폭탄을 사용할 수 없다.",
             ephemeral=True,
         )
         return
@@ -1146,12 +1317,13 @@ async def combat_bomb(interaction, session):
     enemy = session.room().enemy
 
     if enemy is None:
-        await interaction.response.send_message("적이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("적이 없다.", ephemeral=True)
         return
     if p.bombs <= 0:
-        await interaction.response.send_message("폭탄이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("폭탄이 없다.", ephemeral=True)
         return
 
+    cancel_cue(session)
     p.bombs -= 1
     db.save_player(p)
 
@@ -1162,22 +1334,68 @@ async def combat_bomb(interaction, session):
         await enemy_defeated(
             interaction,
             session,
-            f"폭탄이 폭발해 **{damage} 피해**를 주었습니다.",
+            f"💣 폭발! **{damage} 피해**",
         )
         return
 
-    session.phase = "enemy_turn"
+    session.phase = "defend"
     await interaction.response.edit_message(
         embed=combat_embed(
             p,
             session,
-            f"폭탄이 폭발해 **{damage} 피해**를 주었습니다.\n\n적이 반격합니다.",
+            f"💣 폭발! **{damage} 피해**\n\n적이 반격한다.",
         ),
-        view=DodgeView(session),
+        view=CombatView(session, "defend"),
     )
+    schedule_cue(interaction, session, "defend")
+
+
+async def try_run(interaction, session):
+    enemy = session.room().enemy
+    if enemy is None or enemy.boss:
+        await interaction.response.send_message("보스전에서는 도망칠 수 없다.", ephemeral=True)
+        return
+    if session.phase not in ("attack", "defend"):
+        await interaction.response.send_message("지금은 도망칠 수 없다.", ephemeral=True)
+        return
+
+    cancel_cue(session)
+    p = db.get_player(session.guild_id, session.user_id)
+
+    if random.random() < RUN_SUCCESS_RATE:
+        enemy.hp = enemy.max_hp
+        if session.previous is not None:
+            session.current = session.previous
+        session.phase = "explore"
+        await interaction.response.edit_message(
+            embed=exploration_embed(
+                p,
+                session,
+                "**도주 성공!**",
+            ),
+            view=ExploreView(session),
+        )
+        return
+
+    damage = incoming_damage(p, enemy, "MISS")
+    p.hp = max(0, p.hp - damage)
+    db.save_player(p)
+    note = f"**도주 실패!** **{damage} 피해**"
+
+    if p.hp <= 0:
+        await player_died(interaction, session, note)
+        return
+
+    session.phase = "attack"
+    await interaction.response.edit_message(
+        embed=combat_embed(p, session, note + "\n\n다시 기회를 본다."),
+        view=CombatView(session, "attack"),
+    )
+    schedule_cue(interaction, session, "attack")
 
 
 async def enemy_defeated(interaction, session, combat_note):
+    cancel_cue(session)
     room = session.room()
     enemy = room.enemy
     assert enemy is not None
@@ -1187,7 +1405,6 @@ async def enemy_defeated(interaction, session, combat_note):
 
     p = db.get_player(session.guild_id, session.user_id)
 
-    # 코인이 유일한 점수이자 화폐.
     low, high = SHAPES[enemy.shape]["coin_drop"]
     coins = random.randint(low, high)
     if enemy.boss:
@@ -1195,7 +1412,6 @@ async def enemy_defeated(interaction, session, combat_note):
 
     p.coins += coins
 
-    # 기타 전리품도 랜덤.
     bomb_gain = 1 if random.random() < (0.35 if enemy.boss else 0.20) else 0
     p.bombs += bomb_gain
     db.save_player(p)
@@ -1207,13 +1423,12 @@ async def enemy_defeated(interaction, session, combat_note):
     if enemy.boss:
         session.boss_defeated = True
 
-    # 일반 적은 30%, 보스는 100% 장비 드롭.
     if enemy.boss or random.random() < 0.30:
         gear = generate_gear(
             random.choice(("weapon", "armor")),
             boss_drop=enemy.boss,
         )
-        embed = player_embed(p, session, "전리품 발견")
+        embed = player_embed(p, session, "전리품 발견", colour=EMBED_COLORS[enemy.color])
         embed.description = note
         embed.add_field(name="새 장비", value=gear.label(), inline=False)
 
@@ -1234,8 +1449,8 @@ async def show_after_clear(interaction, session, note):
 
     if session.boss_defeated and session.current == session.boss_pos:
         note += (
-            "\n\n**보스를 처치했습니다.** "
-            "지금 오늘을 끝내거나 남은 방을 더 탐색할 수 있습니다."
+            "\n\n**보스를 처치했다!** "
+            "여기서 끝내거나 더 둘러볼 수 있다."
         )
 
     await interaction.response.edit_message(
@@ -1245,6 +1460,7 @@ async def show_after_clear(interaction, session, note):
 
 
 async def player_died(interaction, session, note):
+    cancel_cue(session)
     p = db.get_player(session.guild_id, session.user_id)
     p.hp = 0
     p.last_day = today_key()
@@ -1256,21 +1472,41 @@ async def player_died(interaction, session, note):
     embed = player_embed(p, session, "게임 오버")
     embed.description = (
         note
-        + "\n\n오늘은 더 이상 행동할 수 없습니다."
-        + "\n**무기·방어구·코인·폭탄은 전부 유지됩니다.**"
-        + "\n다음 날에는 HP만 전부 회복되어 새 층을 시작합니다."
+        + "\n\n오늘은 더 이상 플레이할 수 없다."
+        + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
+        + "\n내일은 HP가 전부 회복된 상태로 시작한다."
     )
     await interaction.response.edit_message(embed=embed, view=None)
+
+
+async def player_died_background(interaction, session, note):
+    cancel_cue(session)
+    p = db.get_player(session.guild_id, session.user_id)
+    p.hp = 0
+    p.last_day = today_key()
+    p.status = "dead"
+    db.save_player(p)
+    session.ended = True
+
+    embed = player_embed(p, session, "게임 오버")
+    embed.description = (
+        note
+        + "\n\n오늘은 더 이상 플레이할 수 없다."
+        + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
+        + "\n내일은 HP가 전부 회복된 상태로 시작한다."
+    )
+    await interaction.edit_original_response(embed=embed, view=None)
 
 
 async def end_day(interaction, session):
     if not session.boss_defeated:
         await interaction.response.send_message(
-            "보스를 먼저 처치해야 합니다.",
+            "보스를 먼저 처치해야 한다.",
             ephemeral=True,
         )
         return
 
+    cancel_cue(session)
     p = db.get_player(session.guild_id, session.user_id)
     p.last_day = today_key()
     p.status = "finished"
@@ -1278,17 +1514,14 @@ async def end_day(interaction, session):
 
     session.ended = True
 
-    embed = player_embed(p, session, "오늘의 층 종료")
+    embed = player_embed(p, session, "오늘은 여기까지")
     embed.description = (
         f"최종 보유 코인: **{p.coins}**\n"
-        "장비와 자원은 다음 날에도 그대로 유지됩니다."
+        "장비와 자원은 다음 날에도 그대로 유지된다."
     )
     await interaction.response.edit_message(embed=embed, view=None)
 
 
-# ============================================================
-# 상점 / 슬롯
-# ============================================================
 
 async def buy_gear(interaction, session, index, price):
     room = session.room()
@@ -1296,14 +1529,14 @@ async def buy_gear(interaction, session, index, price):
 
     if index >= len(room.shop_stock):
         await interaction.response.send_message(
-            "이미 팔린 물건입니다.",
+            "이미 팔렸다.",
             ephemeral=True,
         )
         return
 
     if p.coins < price:
         await interaction.response.send_message(
-            "코인이 부족합니다.",
+            "코인이 부족하다.",
             ephemeral=True,
         )
         return
@@ -1322,7 +1555,7 @@ async def buy_gear(interaction, session, index, price):
         embed=shop_embed(
             p,
             session,
-            f"**{gear.name}**을(를) 구입해 바로 장착했습니다.",
+            f"**{gear.name}** 구입 및 장착 완료.",
         ),
         view=ShopView(session),
     )
@@ -1333,7 +1566,7 @@ async def buy_bomb(interaction, session):
 
     if p.coins < 3:
         await interaction.response.send_message(
-            "코인이 부족합니다.",
+            "코인이 부족하다.",
             ephemeral=True,
         )
         return
@@ -1343,7 +1576,7 @@ async def buy_bomb(interaction, session):
     db.save_player(p)
 
     await interaction.response.edit_message(
-        embed=shop_embed(p, session, "폭탄 **1개**를 구입했습니다."),
+        embed=shop_embed(p, session, "폭탄 **1개**를 구입했다."),
         view=ShopView(session),
     )
 
@@ -1354,14 +1587,14 @@ async def play_slot(interaction, session):
 
     if room.slot_broken:
         await interaction.response.send_message(
-            "이미 고장난 기계입니다.",
+            "이미 고장 난 기계다.",
             ephemeral=True,
         )
         return
 
     if p.coins < 1:
         await interaction.response.send_message(
-            "코인이 없습니다.",
+            "코인이 없다.",
             ephemeral=True,
         )
         return
@@ -1371,7 +1604,7 @@ async def play_slot(interaction, session):
 
     roll = random.random()
     if roll < 0.45:
-        note = "아무것도 나오지 않았습니다."
+        note = "아무것도 안 나왔다."
     elif roll < 0.68:
         gain = random.randint(1, 2)
         p.coins += gain
@@ -1387,14 +1620,14 @@ async def play_slot(interaction, session):
     else:
         gain = random.randint(4, 7)
         p.coins += gain
-        note = f"잭팟. 코인 **+{gain}**"
+        note = f"잭팟! 코인 **+{gain}**"
 
     break_rates = [0.05, 0.10, 0.20, 0.35, 0.55, 0.75]
     break_rate = break_rates[min(room.slot_uses - 1, len(break_rates) - 1)]
 
     if random.random() < break_rate:
         room.slot_broken = True
-        note += "\n\n`철컥.` 슬롯머신이 고장났습니다."
+        note += "\n\n**철컥.** 슬롯머신이 멈췄다."
 
     db.save_player(p)
 
@@ -1410,14 +1643,14 @@ async def bomb_slot(interaction, session):
 
     if room.slot_broken:
         await interaction.response.send_message(
-            "이미 고장난 기계입니다.",
+            "이미 고장 난 기계다.",
             ephemeral=True,
         )
         return
 
     if p.bombs < 1:
         await interaction.response.send_message(
-            "폭탄이 없습니다.",
+            "폭탄이 없다.",
             ephemeral=True,
         )
         return
@@ -1433,15 +1666,12 @@ async def bomb_slot(interaction, session):
         embed=slot_embed(
             p,
             session,
-            f"슬롯머신을 폭파했습니다.\n잔해에서 코인 **{gain}개**를 얻었습니다.",
+            f"💣 슬롯머신 폭파!\n코인 **+{gain}**",
         ),
         view=SlotView(session),
     )
 
 
-# ============================================================
-# Bot / Slash commands
-# ============================================================
 
 intents = discord.Intents.default()
 
@@ -1483,8 +1713,8 @@ async def game(interaction: discord.Interaction):
 
     if p.last_day == today and p.status == "dead":
         await interaction.response.send_message(
-            "오늘은 이미 사망했습니다. 내일 다시 플레이할 수 있습니다.\n"
-            "무기·방어구·코인·폭탄은 그대로 유지됩니다.\n"
+            "오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!\n"
+            "무기·방패·코인·폭탄은 그대로 유지된다.\n"
             "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
             ephemeral=True,
         )
@@ -1492,7 +1722,7 @@ async def game(interaction: discord.Interaction):
 
     if p.last_day == today and p.status == "finished":
         await interaction.response.send_message(
-            "오늘의 층을 이미 종료했습니다.\n"
+            "오늘은 여기까지다.\n"
             "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
             ephemeral=True,
         )
@@ -1503,10 +1733,11 @@ async def game(interaction: discord.Interaction):
         room = old.room()
 
         if room.kind in ("normal", "boss") and not room.cleared:
-            old.phase = "player_turn"
+            cancel_cue(old)
+            old.phase = "battle_ready"
             await interaction.response.send_message(
-                embed=combat_embed(p, old, "진행 중인 전투로 돌아왔습니다."),
-                view=AttackView(old),
+                embed=combat_embed(p, old, "전투 화면으로 돌아왔다. 다시 전투를 시작하자!"),
+                view=BattleStartView(old),
                 ephemeral=True,
             )
         elif room.kind == "shop":
@@ -1523,13 +1754,12 @@ async def game(interaction: discord.Interaction):
             )
         else:
             await interaction.response.send_message(
-                embed=exploration_embed(p, old, "진행 중인 층으로 돌아왔습니다."),
+                embed=exploration_embed(p, old, "진행 중인 층으로 돌아왔다."),
                 view=ExploreView(old),
                 ephemeral=True,
             )
         return
 
-    # 새 날: 아이템/코인/폭탄 유지, HP만 회복
     p.hp = p.max_hp
     p.last_day = today
     p.status = "playing"
@@ -1542,7 +1772,7 @@ async def game(interaction: discord.Interaction):
         embed=exploration_embed(
             p,
             session,
-            "**플레이테스트용 1층**이 랜덤 생성되었습니다.",
+            "**1층 시작!**",
         ),
         view=ExploreView(session),
         ephemeral=True,
@@ -1569,7 +1799,7 @@ async def status(interaction: discord.Interaction):
         inline=False,
     )
     embed.add_field(name="무기", value=p.weapon.label(), inline=False)
-    embed.add_field(name="방어구", value=p.armor.label(), inline=False)
+    embed.add_field(name="방패", value=p.armor.label(), inline=False)
     embed.add_field(
         name="오늘",
         value=f"`{p.last_day or '미시작'}` · `{p.status}`",
@@ -1578,7 +1808,7 @@ async def status(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="점수판", description="보유 코인이 많은 순서대로 순위를 봅니다.")
+@bot.tree.command(name="점수판", description="보유 코인 순위를 확인합니다.")
 async def leaderboard(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
@@ -1597,15 +1827,15 @@ async def leaderboard(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="코인 순위",
-        description="\n".join(lines) if lines else "아직 기록이 없습니다.",
+        description="\n".join(lines) if lines else "아직 기록이 없다.",
     )
-    embed.set_footer(text="별도 점수는 없습니다. 현재 보유 코인이 순위입니다.")
+    embed.set_footer(text="별도 점수는 없다. 보유 코인으로 순위가 결정된다.")
     await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(
     name="테스트리셋",
-    description="플레이테스트용: 오늘 제한과 현재 층만 초기화합니다.",
+    description="플레이테스트용: 오늘의 플레이 제한과 현재 층을 초기화합니다.",
 )
 async def test_reset(interaction: discord.Interaction):
     if interaction.guild_id is None:
@@ -1616,12 +1846,14 @@ async def test_reset(interaction: discord.Interaction):
         return
 
     key = (interaction.guild_id, interaction.user.id)
-    sessions.pop(key, None)
+    old = sessions.pop(key, None)
+    if old:
+        cancel_cue(old)
     db.test_reset(interaction.guild_id, interaction.user.id)
 
     await interaction.response.send_message(
         "테스트 상태를 초기화했습니다. `/게임`으로 새 랜덤 층을 시작할 수 있습니다.\n"
-        "**무기·방어구·코인·폭탄은 유지됩니다.**",
+        "**무기·방패·코인·폭탄은 유지됩니다.**",
         ephemeral=True,
     )
 
