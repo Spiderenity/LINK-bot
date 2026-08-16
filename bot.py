@@ -870,16 +870,28 @@ class ExploreView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
 
-        for direction, target in accessible_directions(session):
+        for direction, delta in DIRECTIONS.items():
+            target = add_pos(session.current, delta)
+            can_move = (
+                target in session.rooms
+                and not (
+                    target == session.secret_pos
+                    and not session.secret_revealed
+                )
+            )
+
             btn = discord.ui.Button(
                 emoji=DIR_EMOJI[direction],
                 style=discord.ButtonStyle.primary,
+                disabled=not can_move,
             )
 
-            async def callback(interaction, d=direction, t=target):
-                await move_player(interaction, self.session, d, t)
+            if can_move:
+                async def callback(interaction, d=direction, t=target):
+                    await move_player(interaction, self.session, d, t)
 
-            btn.callback = callback
+                btn.callback = callback
+
             self.add_item(btn)
 
         if crack_here(session):
