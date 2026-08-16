@@ -766,6 +766,10 @@ def shop_embed(player, session, note=""):
     return embed
 
 
+def slot_cost(room):
+    return 10 * (room.slot_uses + 1)
+
+
 def slot_embed(player, session, note=""):
     room = session.room()
     embed = player_embed(player, session, "🎰 슬롯머신")
@@ -776,7 +780,7 @@ def slot_embed(player, session, note=""):
         value=(
             f"상태: **{'고장' if room.slot_broken else '작동 중'}**\n"
             f"사용 횟수: `{room.slot_uses}`\n"
-            "1회 비용: `1코인`"
+            f"1회 비용: `{slot_cost(room)}코인`"
         ),
         inline=False,
     )
@@ -1060,11 +1064,12 @@ class SlotView(OwnerView):
         room = session.room()
         p = db.get_player(session.guild_id, session.user_id)
 
+        cost = slot_cost(room)
         play = discord.ui.Button(
-            label="1코인",
+            label=f"{cost}코인",
             emoji="🎰",
             style=discord.ButtonStyle.success,
-            disabled=room.slot_broken or p.coins < 1,
+            disabled=room.slot_broken or p.coins < cost,
         )
 
         async def play_callback(interaction):
@@ -1774,14 +1779,15 @@ async def play_slot(interaction, session):
         )
         return
 
-    if p.coins < 1:
+    cost = slot_cost(room)
+    if p.coins < cost:
         await interaction.response.edit_message(
-            embed=slot_embed(p, session, "코인이 없다."),
+            embed=slot_embed(p, session, "코인이 부족하다."),
             view=SlotView(session),
         )
         return
 
-    p.coins -= 1
+    p.coins -= cost
     room.slot_uses += 1
 
     roll = random.random()
@@ -1840,7 +1846,7 @@ async def bomb_slot(interaction, session):
     p.bombs -= 1
     room.slot_broken = True
 
-    gain = random.randint(1, 7)
+    gain = random.randint(27, 33)
     p.coins += gain
     db.save_player(p)
 
