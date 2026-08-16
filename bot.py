@@ -26,7 +26,8 @@ KST = ZoneInfo("Asia/Seoul")
 DB_PATH = Path(__file__).with_name("game.db")
 
 COLORS = ("시안", "마젠타", "옐로")
-COLOR_MARK = {"시안": "C", "마젠타": "M", "옐로": "Y"}
+COLOR_MARK = {"시안": "🩵", "마젠타": "🩷", "옐로": "💛"}
+ANSI_COLOR = {"시안": 36, "마젠타": 35, "옐로": 33}
 EMBED_COLORS = {
     "시안": 0x00DDE0,
     "마젠타": 0xF000B8,
@@ -82,9 +83,9 @@ SHAPES = {
 
 DIRECTIONS = {
     "위": (0, -1),
-    "오른쪽": (1, 0),
     "아래": (0, 1),
     "왼쪽": (-1, 0),
+    "오른쪽": (1, 0),
 }
 
 ASCII_ART = {
@@ -107,9 +108,9 @@ class Gear:
         pips = []
         for color in COLORS:
             n = self.affinity.get(color, 0)
-            pips.append(f"{COLOR_MARK[color]}{'●' * n if n else '○'}")
+            pips.append(f"{COLOR_MARK[color]} {'●' * n if n else '○'}")
         stat = "공격" if self.kind == "weapon" else "방어"
-        return f"{self.name} | {stat} {self.power} | {' '.join(pips)}"
+        return f"{self.name} | {stat} {self.power} | {'  '.join(pips)}"
 
     def to_json(self) -> str:
         return json.dumps(
@@ -453,9 +454,23 @@ def generate_floor(guild_id: int, user_id: int, day: str) -> GameSession:
 
 
 
-def hp_bar(current: int, maximum: int, width=10):
-    filled = round(width * max(0, current) / max(1, maximum))
-    return "█" * filled + "░" * (width - filled)
+def hp_bar(current: int, maximum: int, width=8, enemy=False):
+    ratio = max(0, current) / max(1, maximum)
+    filled = round(width * ratio)
+    if enemy:
+        full = "🟥"
+    elif ratio > 0.5:
+        full = "🟩"
+    elif ratio > 0.25:
+        full = "🟨"
+    else:
+        full = "🟥"
+    return full * filled + "⬛" * (width - filled)
+
+
+def colored_enemy_art(enemy: Enemy) -> str:
+    code = ANSI_COLOR[enemy.color]
+    return f"```ansi\n\u001b[{code}m{enemy.art}\u001b[0m\n```"
 
 
 def affinity(gear: Gear, color: str) -> int:
@@ -590,7 +605,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
     embed.add_field(
         name="상태",
         value=(
-            f"HP `{player.hp}/{player.max_hp}` {hp_bar(player.hp, player.max_hp)}\n"
+            f"HP {hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
             f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
         ),
         inline=False,
@@ -636,33 +651,52 @@ def combat_embed(player, session, note=""):
     enemy = session.room().enemy
     assert enemy is not None
 
+    color_icon = COLOR_MARK[enemy.color]
     title = (
-        f"{enemy.color} 보스"
+        f"{color_icon} {enemy.color} 보스"
         if enemy.boss
-        else f"{enemy.color} {enemy.shape}"
+        else f"{color_icon} {enemy.color} {enemy.shape}"
     )
-    embed = player_embed(
-        player,
-        session,
-        title,
+
+    embed = discord.Embed(
+        title=title,
         colour=EMBED_COLORS[enemy.color],
     )
-    if note:
-        embed.description = note
+
     embed.add_field(
-        name="형태",
-        value=f"```text\n{enemy.art}\n```",
+        name="적",
+        value=colored_enemy_art(enemy),
         inline=False,
     )
     embed.add_field(
-        name="적",
+        name="적 HP",
         value=(
-            f"HP `{max(0, enemy.hp)}/{enemy.max_hp}` "
-            f"{hp_bar(max(0, enemy.hp), enemy.max_hp)}\n"
+            f"{hp_bar(max(0, enemy.hp), enemy.max_hp, enemy=True)} "
+            f"`{max(0, enemy.hp)}/{enemy.max_hp}`\n"
             f"공격력 `{enemy.damage}`"
         ),
         inline=False,
     )
+
+    embed.add_field(
+        name="내 HP",
+        value=(
+            f"{hp_bar(player.hp, player.max_hp)} "
+            f"`{player.hp}/{player.max_hp}`\n"
+            f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(name="무기", value=player.weapon.label(), inline=False)
+    embed.add_field(name="방패", value=player.armor.label(), inline=False)
+
+    if note:
+        embed.add_field(
+            name="\u200b",
+            value=note,
+            inline=False,
+        )
+
     return embed
 
 
@@ -1216,7 +1250,7 @@ async def start_battle(interaction, session):
 
 async def press_timing(interaction, session, kind):
     if session.phase != kind or session.cue_kind != kind:
-        await interaction.response.send_message("지금은 사용할 수 없다.", ephemeral=True)
+        await interaction.response.defer()
         return
 
     room = session.room()
@@ -1307,10 +1341,7 @@ async def press_timing(interaction, session, kind):
 
 async def combat_bomb(interaction, session):
     if session.phase != "attack":
-        await interaction.response.send_message(
-            "지금은 폭탄을 사용할 수 없다.",
-            ephemeral=True,
-        )
+        await interaction.response.defer()
         return
 
     p = db.get_player(session.guild_id, session.user_id)
@@ -1356,7 +1387,7 @@ async def try_run(interaction, session):
         await interaction.response.send_message("보스전에서는 도망칠 수 없다.", ephemeral=True)
         return
     if session.phase not in ("attack", "defend"):
-        await interaction.response.send_message("지금은 도망칠 수 없다.", ephemeral=True)
+        await interaction.response.defer()
         return
 
     cancel_cue(session)
