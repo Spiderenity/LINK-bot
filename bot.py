@@ -23,7 +23,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
 KST = ZoneInfo("Asia/Seoul")
-DB_PATH = Path(__file__).with_name("game.db")
+DB_PATH = Path("/data/game.db")
 
 COLORS = ("시안", "마젠타", "옐로")
 COLOR_MARK = {"시안": "🩵", "마젠타": "🩷", "옐로": "💛"}
@@ -1860,7 +1860,6 @@ async def leaderboard(interaction: discord.Interaction):
         title="코인 순위",
         description="\n".join(lines) if lines else "아직 기록이 없다.",
     )
-    embed.set_footer(text="별도 점수는 없다. 보유 코인으로 순위가 결정된다.")
     await interaction.response.send_message(embed=embed)
 
 
