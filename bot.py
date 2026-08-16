@@ -1796,12 +1796,40 @@ async def climb_next_floor(interaction, session):
 
     session.ended = True
 
+    trivia = random.choice(FLOOR_TRIVIA)
+    loading_steps = [
+        (0, 0.75),
+        (18, 0.90),
+        (41, 1.00),
+        (67, 0.85),
+        (88, 0.70),
+        (100, 0.50),
+    ]
+
+    def loading_embed(progress):
+        filled = round(progress / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        return discord.Embed(
+            description=(
+                "**올라가는 중...**\n"
+                f"`{bar}` {progress}%\n\n"
+                f"🎮 {trivia}"
+            )
+        )
+
+    first_progress, first_delay = loading_steps[0]
     await interaction.response.edit_message(
-        embed=discord.Embed(description="**올라가는 중...**"),
+        embed=loading_embed(first_progress),
         view=None,
     )
+    await asyncio.sleep(first_delay)
 
-    await asyncio.sleep(1.25)
+    for progress, delay in loading_steps[1:]:
+        await interaction.edit_original_response(
+            embed=loading_embed(progress),
+            view=None,
+        )
+        await asyncio.sleep(delay)
 
     new_session = generate_floor(
         session.guild_id,
@@ -1815,7 +1843,7 @@ async def climb_next_floor(interaction, session):
         embed=exploration_embed(
             p,
             new_session,
-            f"**{p.floor_number}층 시작!**\n\n🎮 {random.choice(FLOOR_TRIVIA)}",
+            f"**{p.floor_number}층 시작!**",
         ),
         view=ExploreView(new_session),
     )
