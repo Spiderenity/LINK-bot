@@ -82,54 +82,11 @@ SHAPES = {
 }
 
 DIRECTIONS = {
-    "왼쪽": (-1, 0),
-    "아래": (0, 1),
     "위": (0, -1),
+    "아래": (0, 1),
+    "왼쪽": (-1, 0),
     "오른쪽": (1, 0),
 }
-
-FLOOR_TRIVIA = [
-    "꼬지모의 영문명 Sudowoodo는 'pseudo wood', 즉 '가짜 나무'에서 왔다.",
-    "프리져·썬더·파이어의 영문명 Articuno·Zapdos·Moltres에는 uno·dos·tres가 차례로 들어간다.",
-    "피카츄 디자이너 니시다 아츠코는 피카츄를 디자인할 때 다람쥐를 떠올렸다.",
-    "코뿌리는 가장 먼저 디자인된 포켓몬으로 알려져 있다.",
-    "포켓몬스터 1세대 개발 초기에는 패배한 트레이너의 포켓몬을 상대가 가져가는 시스템도 검토됐다.",
-    "기술 '물기'는 물리→특수→물리로 분류가 두 번 바뀌었다.",
-    "3·4세대 더블배틀에서는 START 버튼을 누르면 포켓몬의 HP가 숫자로 표시된다.",
-    "톱치는 플라이곤과 공격 종족값이 같다. 비브라바로 진화할 때 내려갔다가 플라이곤이 되면 다시 오른다.",
-    "기술 '튀어오르기'의 일본판 이름은 '튀다'에 가까워서 잉어킹 말고도 여러 포켓몬이 배운다.",
-    "중력이 강해진 상태에서는 '튀어오르기'를 사용할 수 없다.",
-    "1세대에서 오박사가 소개하는 니드리노는 니드리나의 울음소리를 낸다.",
-    "암컷 마자용은 입술 모양의 무늬로 성별을 구분할 수 있다.",
-    "사철록의 영문명 Sawsbuck에는 Summer·Autumn·Winter·Spring의 머리글자 SAWS가 들어간다.",
-    "피카츄의 전국도감 번호는 25번, 나옹은 52번이다.",
-    "커비는 개발 초기에 '포포포'라는 이름으로 불렸다.",
-    "초대 '별의 커비'에는 아직 카피 능력이 없었다.",
-    "카피 능력이 처음 등장한 작품은 '별의 커비 꿈의 샘 이야기'다.",
-    "커비의 둥근 디자인은 개발 중 임시로 쓰던 단순한 그래픽에서 출발했다.",
-    "별의 커비에 등장하는 적 아폴로는 일본 과자 '아폴로'가 모티브라서 삼키면 체력이 회복된다.",
-    "마르크는 초기 일본 일러스트에서 안경을 쓰고 있었다.",
-    "북미판 커비 패키지에서 커비가 더 화난 표정을 짓던 것은 실제 현지 마케팅 방향이었다.",
-    "별의 커비 시리즈는 일시정지 화면에 보스나 세계관 설정을 적어 둔 작품이 여럿 있다.",
-    "마리오가 게임 안에서 처음 'Mario'라는 이름으로 불린 작품은 'Donkey Kong Jr.'다.",
-    "루이지의 첫 등장은 아케이드판보다 먼저 나온 Game & Watch판 'Mario Bros.'다.",
-    "서양판에서 피치 공주를 'Peach'라고 부른 것은 'Yoshi's Safari'가 'Super Mario 64'보다 먼저였다.",
-    "초대 'Super Mario Bros.'의 구름과 수풀은 같은 모양의 그래픽에 색만 다르게 썼다.",
-    "서양판 'Super Mario Bros. 2'는 원래 다른 게임인 '꿈공장 도키도키 패닉'을 마리오 게임으로 바꾼 작품이다.",
-    "N64 'Mario Party' 시리즈에서 와리오는 독일어 대사를 말하는 음성이 있다.",
-    "일본판 초대 '젤다의 전설'에서는 패미컴 2P 컨트롤러의 마이크에 소리를 내서 폴스 보이스를 쓰러뜨릴 수 있다.",
-    "'젤다의 전설 꿈꾸는 섬'에서 상점 물건을 훔치면 이후 게임이 플레이어를 'THIEF'라고 부른다.",
-    "'무쥬라의 가면'의 세계는 3일이 지나면 달이 떨어져 처음으로 되돌아간다.",
-    "'동물의 숲' 시리즈 일부 작품에서는 새벽 3시 33분에 TV를 켜면 외계인 방송이 나온다.",
-    "'튀어나와요 동물의 숲'에서는 일부 은 도구가 금 도구에 없는 고유 기능을 갖고 있다.",
-    "'모여봐요 동물의 숲'의 일부 가짜 미술품은 밤이 되면 모습이 변한다.",
-    "'Minecraft'의 철 골렘이 주민에게 꽃을 건네는 모습은 '천공의 성 라퓨타'의 로봇을 참고했다.",
-    "'Minecraft'에서는 자연적으로 분홍색 양이 태어날 수 있다.",
-    "'Minecraft'의 엔드 함선에 남아 있는 자홍색 유리는 개발 중 비콘 테스트의 흔적으로 알려져 있다.",
-    "'Portal'의 연구실 모니터 뒤에는 케이크 레시피가 숨겨져 있다.",
-    "'Metal Gear Solid 2'의 얼음 조각은 시간이 지나면 실제로 녹는다.",
-]
-
 
 ASCII_ART = {
     "보스": '░░░░░░░░░░░░░░░░░░\n░░░░░▄▄████▄▄░░░░░\n░░░▄██████████▄░░░\n░▄██▄██▄██▄██▄██▄░\n░░░▀█▀░░▀▀░░▀█▀░░░\n░░░░░░░░░░░░░░░░░░\n░░░░░░░░░░░░░░░░░░',
@@ -220,7 +177,6 @@ class PlayerState:
     last_day: str
     status: str
     floor_number: int
-    highest_floor: int
 
 
 @dataclass
@@ -275,7 +231,6 @@ class Database:
                     last_day TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'ready',
                     floor_number INTEGER NOT NULL DEFAULT 1,
-                    highest_floor INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (guild_id, user_id)
                 )
                 """
@@ -287,18 +242,13 @@ class Database:
                 con.execute(
                     "ALTER TABLE players ADD COLUMN floor_number INTEGER NOT NULL DEFAULT 1"
                 )
-            if "highest_floor" not in columns:
-                con.execute(
-                    "ALTER TABLE players ADD COLUMN highest_floor INTEGER NOT NULL DEFAULT 1"
-                )
 
     def get_player(self, guild_id: int, user_id: int) -> PlayerState:
         with self.connect() as con:
             row = con.execute(
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
-                       weapon_json, armor_json, last_day, status, floor_number,
-                       highest_floor
+                       weapon_json, armor_json, last_day, status, floor_number
                 FROM players
                 WHERE guild_id=? AND user_id=?
                 """,
@@ -310,9 +260,8 @@ class Database:
                     """
                     INSERT INTO players
                     (guild_id, user_id, coins, bombs, max_hp, hp,
-                     weapon_json, armor_json, last_day, status, floor_number,
-                     highest_floor)
-                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1, 1)
+                     weapon_json, armor_json, last_day, status, floor_number)
+                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1)
                     """,
                     (
                         guild_id,
@@ -336,7 +285,6 @@ class Database:
             last_day=row[8],
             status=row[9],
             floor_number=row[10],
-            highest_floor=row[11],
         )
 
     def save_player(self, p: PlayerState):
@@ -345,8 +293,7 @@ class Database:
                 """
                 UPDATE players
                 SET coins=?, bombs=?, max_hp=?, hp=?,
-                    weapon_json=?, armor_json=?, last_day=?, status=?,
-                    floor_number=?, highest_floor=?
+                    weapon_json=?, armor_json=?, last_day=?, status=?, floor_number=?
                 WHERE guild_id=? AND user_id=?
                 """,
                 (
@@ -359,7 +306,6 @@ class Database:
                     p.last_day,
                     p.status,
                     p.floor_number,
-                    p.highest_floor,
                     p.guild_id,
                     p.user_id,
                 ),
@@ -402,8 +348,6 @@ def add_pos(a, b):
 
 
 def random_affinity(min_points=1, max_points=3):
-    min_points = max(0, min(6, min_points))
-    max_points = max(min_points, min(6, max_points))
     result = {c: 0 for c in COLORS}
     for _ in range(random.randint(min_points, max_points)):
         choices = [c for c in COLORS if result[c] < 2]
@@ -411,20 +355,7 @@ def random_affinity(min_points=1, max_points=3):
     return result
 
 
-def gear_price(gear: Gear, floor_number: int) -> int:
-    floor_bonus = max(0, floor_number - 1)
-    if gear.kind == "weapon":
-        return 18 + floor_bonus * 4
-    return 15 + floor_bonus * 3
-
-
-def bomb_price(floor_number: int) -> int:
-    return 8 + max(0, floor_number - 1) * 2
-
-
-def generate_gear(kind: str, boss_drop=False, floor_number: int = 1) -> Gear:
-    floor_bonus = max(0, floor_number - 1)
-
+def generate_gear(kind: str, boss_drop=False) -> Gear:
     if kind == "weapon":
         names = [
             "유리 파편",
@@ -433,9 +364,7 @@ def generate_gear(kind: str, boss_drop=False, floor_number: int = 1) -> Gear:
             "고장 난 절단기",
             "비상 신호총",
         ]
-        low = 6 if boss_drop else 5
-        high = 9 if boss_drop else 7
-        power = random.randint(low, high) + floor_bonus
+        power = random.randint(5, 7 if not boss_drop else 9)
     else:
         names = [
             "화물 상자 뚜껑",
@@ -444,30 +373,26 @@ def generate_gear(kind: str, boss_drop=False, floor_number: int = 1) -> Gear:
             "비상문 조각",
             "금 간 방패",
         ]
-        low = 2 if boss_drop else 1
-        high = 4 if boss_drop else 3
-        power = random.randint(low, high) + floor_bonus // 2
+        power = random.randint(1, 3 if not boss_drop else 4)
 
-    affinity_bonus = min(2, floor_bonus // 2)
     return Gear(
         kind=kind,
         name=random.choice(names),
         power=power,
         affinity=random_affinity(
-            (2 if boss_drop else 1) + affinity_bonus,
-            (4 if boss_drop else 3) + affinity_bonus,
+            2 if boss_drop else 1,
+            4 if boss_drop else 3,
         ),
     )
 
 
-def make_enemy(boss=False, floor_number: int = 1) -> Enemy:
+def make_enemy(boss=False) -> Enemy:
     shape = "보스" if boss else random.choice(NORMAL_ENEMIES)
     color = random.choice(COLORS)
     spec = SHAPES[shape]
-    floor_bonus = max(0, floor_number - 1)
 
-    hp = random.randint(*spec["hp"]) + floor_bonus * (4 if boss else 2)
-    damage = random.randint(*spec["damage"]) + floor_bonus // 2
+    hp = random.randint(*spec["hp"])
+    damage = random.randint(*spec["damage"])
 
     return Enemy(shape, color, hp, hp, damage, boss)
 
@@ -521,11 +446,11 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
         if pos == (0, 0):
             rooms[pos] = Room(pos, "start", visited=True, cleared=True)
         elif pos == boss_pos:
-            rooms[pos] = Room(pos, "boss", enemy=make_enemy(True, floor_number))
+            rooms[pos] = Room(pos, "boss", enemy=make_enemy(True))
         else:
             kind = kind_by_pos[pos]
             if kind == "normal":
-                rooms[pos] = Room(pos, "normal", enemy=make_enemy(False, floor_number))
+                rooms[pos] = Room(pos, "normal", enemy=make_enemy(False))
             else:
                 rooms[pos] = Room(pos, kind)
 
@@ -544,8 +469,8 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
     secret = Room(secret_pos, secret_kind)
     if secret_kind == "shop":
         secret.shop_stock = [
-            generate_gear("weapon", floor_number=floor_number),
-            generate_gear("armor", floor_number=floor_number),
+            generate_gear("weapon"),
+            generate_gear("armor"),
         ]
         secret.bomb_stock = random.randint(1, 3)
 
@@ -831,11 +756,10 @@ def shop_embed(player, session, note=""):
 
     lines = []
     for i, gear in enumerate(room.shop_stock[:2], 1):
-        price = gear_price(gear, session.floor_number)
+        price = 6 if gear.kind == "weapon" else 5
         lines.append(f"{i}. `{price}코인` — {gear.label()}")
-    price = bomb_price(session.floor_number)
     if room.bomb_stock > 0:
-        lines.append(f"3. `{price}코인` — 폭탄 +1 · 재고 `{room.bomb_stock}`")
+        lines.append(f"3. `3코인` — 폭탄 +1 · 재고 `{room.bomb_stock}`")
     else:
         lines.append("3. **SOLD OUT** — 폭탄")
 
@@ -847,8 +771,8 @@ def shop_embed(player, session, note=""):
     return embed
 
 
-def slot_cost(room, floor_number: int):
-    return 10 * (room.slot_uses + 1) + max(0, floor_number - 1) * 2
+def slot_cost(room):
+    return 10 * (room.slot_uses + 1)
 
 
 def slot_embed(player, session, note=""):
@@ -861,7 +785,7 @@ def slot_embed(player, session, note=""):
         value=(
             f"상태: **{'고장' if room.slot_broken else '작동 중'}**\n"
             f"사용 횟수: `{room.slot_uses}`\n"
-            f"1회 비용: `{slot_cost(room, session.floor_number)}코인`"
+            f"1회 비용: `{slot_cost(room)}코인`"
         ),
         inline=False,
     )
@@ -924,28 +848,16 @@ class ExploreView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
 
-        for direction, delta in DIRECTIONS.items():
-            target = add_pos(session.current, delta)
-            can_move = (
-                target in session.rooms
-                and not (
-                    target == session.secret_pos
-                    and not session.secret_revealed
-                )
-            )
-
+        for direction, target in accessible_directions(session):
             btn = discord.ui.Button(
                 emoji=DIR_EMOJI[direction],
                 style=discord.ButtonStyle.primary,
-                disabled=not can_move,
             )
 
-            if can_move:
-                async def callback(interaction, d=direction, t=target):
-                    await move_player(interaction, self.session, d, t)
+            async def callback(interaction, d=direction, t=target):
+                await move_player(interaction, self.session, d, t)
 
-                btn.callback = callback
-
+            btn.callback = callback
             self.add_item(btn)
 
         if crack_here(session):
@@ -1109,7 +1021,7 @@ class ShopView(OwnerView):
         p = db.get_player(session.guild_id, session.user_id)
 
         for index, gear in enumerate(room.shop_stock[:2]):
-            price = gear_price(gear, session.floor_number)
+            price = 6 if gear.kind == "weapon" else 5
             btn = discord.ui.Button(
                 label=f"{index + 1}번 ({price})",
                 style=discord.ButtonStyle.success,
@@ -1122,12 +1034,11 @@ class ShopView(OwnerView):
             btn.callback = callback
             self.add_item(btn)
 
-        price = bomb_price(session.floor_number)
         bomb = discord.ui.Button(
-            label=f"{price}코인" if room.bomb_stock > 0 else "SOLD OUT",
+            label="3코인" if room.bomb_stock > 0 else "SOLD OUT",
             emoji="💣",
             style=discord.ButtonStyle.secondary,
-            disabled=room.bomb_stock <= 0 or p.coins < price,
+            disabled=room.bomb_stock <= 0 or p.coins < 3,
         )
 
         async def bomb_callback(interaction):
@@ -1158,7 +1069,7 @@ class SlotView(OwnerView):
         room = session.room()
         p = db.get_player(session.guild_id, session.user_id)
 
-        cost = slot_cost(room, session.floor_number)
+        cost = slot_cost(room)
         play = discord.ui.Button(
             label=f"{cost}코인",
             emoji="🎰",
@@ -1353,8 +1264,7 @@ async def move_player(interaction, session, direction, target):
         return
 
     if room.kind == "coin" and not room.cleared:
-        reward_bonus = max(0, (session.floor_number - 1) // 2)
-        amount = random.randint(2, 4) + reward_bonus
+        amount = random.randint(1, 3)
         p.coins += amount
         room.cleared = True
         db.save_player(p)
@@ -1412,8 +1322,7 @@ async def break_pot(interaction, session):
     roll = random.random()
 
     if roll < 0.50:
-        reward_bonus = max(0, (session.floor_number - 1) // 2)
-        amount = random.randint(2, 5) + reward_bonus
+        amount = random.randint(1, 4)
         p.coins += amount
         db.save_player(p)
         note = f"🏺 항아리를 깼다! 코인 **{amount}개**가 나왔다."
@@ -1679,10 +1588,9 @@ async def enemy_defeated(interaction, session, combat_note):
     p = db.get_player(session.guild_id, session.user_id)
 
     low, high = SHAPES[enemy.shape]["coin_drop"]
-    reward_bonus = max(0, (session.floor_number - 1) // 2)
-    coins = random.randint(low, high) + reward_bonus
+    coins = random.randint(low, high)
     if enemy.boss:
-        coins += random.randint(5, 9) + reward_bonus
+        coins += random.randint(5, 9)
 
     p.coins += coins
 
@@ -1701,7 +1609,6 @@ async def enemy_defeated(interaction, session, combat_note):
         gear = generate_gear(
             random.choice(("weapon", "armor")),
             boss_drop=enemy.boss,
-            floor_number=session.floor_number,
         )
         embed = player_embed(p, session, "전리품 발견", colour=EMBED_COLORS[enemy.color])
         embed.description = note
@@ -1740,8 +1647,6 @@ async def player_died(interaction, session, note):
     p.hp = 0
     p.last_day = today_key()
     p.status = "dead"
-    p.floor_number = session.floor_number
-    p.highest_floor = max(p.highest_floor, session.floor_number)
     db.save_player(p)
 
     session.ended = True
@@ -1751,7 +1656,7 @@ async def player_died(interaction, session, note):
         note
         + "\n\n오늘은 더 이상 플레이할 수 없다."
         + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
-        + f"\n내일은 HP가 전부 회복되고 **{p.floor_number}층**에서 다시 시작한다."
+        + "\n내일은 HP가 전부 회복된 상태로 시작한다."
     )
     await interaction.response.edit_message(embed=embed, view=None)
 
@@ -1762,8 +1667,6 @@ async def player_died_background(interaction, session, note):
     p.hp = 0
     p.last_day = today_key()
     p.status = "dead"
-    p.floor_number = session.floor_number
-    p.highest_floor = max(p.highest_floor, session.floor_number)
     db.save_player(p)
     session.ended = True
 
@@ -1772,7 +1675,7 @@ async def player_died_background(interaction, session, note):
         note
         + "\n\n오늘은 더 이상 플레이할 수 없다."
         + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
-        + f"\n내일은 HP가 전부 회복되고 **{p.floor_number}층**에서 다시 시작한다."
+        + "\n내일은 HP가 전부 회복된 상태로 시작한다."
     )
     await interaction.edit_original_response(embed=embed, view=None)
 
@@ -1789,47 +1692,9 @@ async def climb_next_floor(interaction, session):
     cancel_cue(session)
     p = db.get_player(session.guild_id, session.user_id)
     p.floor_number = session.floor_number + 1
-    p.highest_floor = max(p.highest_floor, p.floor_number)
     p.last_day = today_key()
     p.status = "playing"
     db.save_player(p)
-
-    session.ended = True
-
-    trivia = random.choice(FLOOR_TRIVIA)
-    loading_steps = [
-        (0, 0.75),
-        (18, 0.90),
-        (41, 1.00),
-        (67, 0.85),
-        (88, 0.70),
-        (100, 0.50),
-    ]
-
-    def loading_embed(progress):
-        filled = round(progress / 10)
-        bar = "█" * filled + "░" * (10 - filled)
-        return discord.Embed(
-            description=(
-                "**올라가는 중...**\n"
-                f"`{bar}` {progress}%\n\n"
-                f"🎮 {trivia}"
-            )
-        )
-
-    first_progress, first_delay = loading_steps[0]
-    await interaction.response.edit_message(
-        embed=loading_embed(first_progress),
-        view=None,
-    )
-    await asyncio.sleep(first_delay)
-
-    for progress, delay in loading_steps[1:]:
-        await interaction.edit_original_response(
-            embed=loading_embed(progress),
-            view=None,
-        )
-        await asyncio.sleep(delay)
 
     new_session = generate_floor(
         session.guild_id,
@@ -1838,8 +1703,9 @@ async def climb_next_floor(interaction, session):
         p.floor_number,
     )
     sessions[(session.guild_id, session.user_id)] = new_session
+    session.ended = True
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=exploration_embed(
             p,
             new_session,
@@ -1898,15 +1764,14 @@ async def buy_bomb(interaction, session):
         )
         return
 
-    price = bomb_price(session.floor_number)
-    if p.coins < price:
+    if p.coins < 3:
         await interaction.response.edit_message(
             embed=shop_embed(p, session, "코인이 부족하다."),
             view=ShopView(session),
         )
         return
 
-    p.coins -= price
+    p.coins -= 3
     p.bombs += 1
     room.bomb_stock -= 1
     db.save_player(p)
@@ -1934,7 +1799,7 @@ async def play_slot(interaction, session):
         )
         return
 
-    cost = slot_cost(room, session.floor_number)
+    cost = slot_cost(room)
     if p.coins < cost:
         await interaction.response.edit_message(
             embed=slot_embed(p, session, "코인이 부족하다."),
@@ -1946,12 +1811,10 @@ async def play_slot(interaction, session):
     room.slot_uses += 1
 
     roll = random.random()
-    reward_bonus = max(0, (session.floor_number - 1) // 2)
-
     if roll < 0.45:
         note = "아무것도 안 나왔다."
     elif roll < 0.68:
-        gain = random.randint(2, 4) + reward_bonus
+        gain = random.randint(1, 2)
         p.coins += gain
         note = f"코인 **+{gain}**"
     elif roll < 0.80:
@@ -1963,7 +1826,7 @@ async def play_slot(interaction, session):
         p.hp = min(p.max_hp, p.hp + heal)
         note = f"HP **+{p.hp - before}**"
     else:
-        gain = random.randint(6, 10) + reward_bonus * 2
+        gain = random.randint(4, 7)
         p.coins += gain
         note = f"잭팟! 코인 **+{gain}**"
 
@@ -2003,8 +1866,7 @@ async def bomb_slot(interaction, session):
     p.bombs -= 1
     room.slot_broken = True
 
-    reward_bonus = max(0, (session.floor_number - 1) // 2)
-    gain = random.randint(27, 33) + reward_bonus * 2
+    gain = random.randint(27, 33)
     p.coins += gain
     db.save_player(p)
 
@@ -2074,18 +1936,17 @@ async def game(interaction: discord.Interaction):
         p.hp = p.max_hp
         p.last_day = today
         p.status = "playing"
-        p.floor_number = max(1, p.floor_number)
-        p.highest_floor = max(p.highest_floor, p.floor_number)
+        p.floor_number = 1
         db.save_player(p)
 
-        session = generate_floor(guild_id, user_id, today, p.floor_number)
+        session = generate_floor(guild_id, user_id, today, 1)
         sessions[key] = session
 
         await interaction.response.send_message(
             embed=exploration_embed(
                 p,
                 session,
-                f"**{p.floor_number}층 시작!**",
+                "**1층 시작!**",
             ),
             view=ExploreView(session),
             ephemeral=True,
@@ -2164,10 +2025,10 @@ async def status(interaction: discord.Interaction):
     embed.add_field(name="무기", value=p.weapon.label(), inline=False)
     embed.add_field(name="방패", value=p.armor.label(), inline=False)
     embed.add_field(
-        name="진행",
+        name="오늘",
         value=(
-            f"현재 `{p.floor_number}층` · 최고 `{p.highest_floor}층`\n"
             f"`{p.last_day or '미시작'}` · `{p.status}`"
+            + (f" · `{p.floor_number}층`" if p.status == "playing" else "")
         ),
         inline=False,
     )
