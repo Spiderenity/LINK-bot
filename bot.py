@@ -1761,9 +1761,8 @@ async def player_died(interaction, session, note):
     embed = player_embed(p, session, "게임 오버")
     embed.description = (
         note
-        + "\n\n오늘은 더 이상 플레이할 수 없다."
-        + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
-        + f"\n내일은 HP가 전부 회복되고 **{p.floor_number}층**에서 다시 시작한다."
+        + "\n\n**눈앞이 캄캄해졌다!**"
+        + f"\n내일 **{p.floor_number}층**에서 다시 도전하자!"
     )
     await interaction.response.edit_message(embed=embed, view=None)
 
@@ -1782,9 +1781,8 @@ async def player_died_background(interaction, session, note):
     embed = player_embed(p, session, "게임 오버")
     embed.description = (
         note
-        + "\n\n오늘은 더 이상 플레이할 수 없다."
-        + "\n**무기·방패·코인·폭탄은 전부 유지된다.**"
-        + f"\n내일은 HP가 전부 회복되고 **{p.floor_number}층**에서 다시 시작한다."
+        + "\n\n**눈앞이 캄캄해졌다!**"
+        + f"\n내일 **{p.floor_number}층**에서 다시 도전하자!"
     )
     await interaction.edit_original_response(embed=embed, view=None)
 
