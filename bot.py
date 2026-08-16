@@ -42,40 +42,40 @@ SHAPES = {
     "크랩": {
         "hp": (9, 13),
         "damage": (4, 6),
-        "attack_perfect": 0.58,
-        "attack_good": 1.12,
-        "defend_perfect": 0.62,
-        "defend_good": 1.20,
+        "attack_perfect": 0.75,
+        "attack_good": 1.40,
+        "defend_perfect": 0.80,
+        "defend_good": 1.50,
         "cue_delay": (1.4, 3.0),
         "coin_drop": (2, 4),
     },
     "옥토퍼스": {
         "hp": (7, 11),
         "damage": (3, 5),
-        "attack_perfect": 0.46,
-        "attack_good": 0.92,
-        "defend_perfect": 0.50,
-        "defend_good": 0.96,
+        "attack_perfect": 0.65,
+        "attack_good": 1.25,
+        "defend_perfect": 0.70,
+        "defend_good": 1.30,
         "cue_delay": (1.0, 2.6),
         "coin_drop": (2, 5),
     },
     "스퀴드": {
         "hp": (5, 9),
         "damage": (3, 5),
-        "attack_perfect": 0.36,
-        "attack_good": 0.76,
-        "defend_perfect": 0.38,
-        "defend_good": 0.80,
+        "attack_perfect": 0.55,
+        "attack_good": 1.05,
+        "defend_perfect": 0.60,
+        "defend_good": 1.10,
         "cue_delay": (0.8, 2.2),
         "coin_drop": (3, 5),
     },
     "보스": {
         "hp": (22, 28),
         "damage": (5, 7),
-        "attack_perfect": 0.42,
-        "attack_good": 0.86,
-        "defend_perfect": 0.44,
-        "defend_good": 0.90,
+        "attack_perfect": 0.60,
+        "attack_good": 1.15,
+        "defend_perfect": 0.65,
+        "defend_good": 1.20,
         "cue_delay": (0.9, 2.4),
         "coin_drop": (7, 11),
     },
@@ -1104,7 +1104,7 @@ async def cue_sequence(interaction, session, kind, token):
         session.cue_started = time.monotonic()
 
         perfect, good = timing_windows(p, enemy, kind)
-        await asyncio.sleep(good + 0.20)
+        await asyncio.sleep(good + 0.45)
         if (
             session.cue_token == token
             and session.phase == kind
