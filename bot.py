@@ -2069,9 +2069,8 @@ async def game(interaction: discord.Interaction):
 
     if p.last_day == today and p.status == "dead":
         await interaction.response.send_message(
-            "오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!\n"
-            "무기·방패·코인·폭탄은 그대로 유지된다.\n"
-            "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
+            "오늘은 더 이상 움직일 수 없다.\n"
+            "내일 다시 도전하자!",
             ephemeral=True,
         )
         return
