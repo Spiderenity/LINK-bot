@@ -211,11 +211,12 @@ class Gear:
 
     def label(self) -> str:
         pips = []
+        superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
         for color in COLORS:
             n = self.affinity.get(color, 0)
-            pips.append(f"{COLOR_MARK[color]} {'●' * n if n else '○'}")
+            pips.append(f"{COLOR_MARK[color]}{str(n).translate(superscript)}")
         stat = "공격" if self.kind == "weapon" else "방어"
-        return f"{self.name} | {stat} {self.power} | {'  '.join(pips)}"
+        return f"{self.name} | {stat} {self.power} | {' '.join(pips)}"
 
     def to_json(self) -> str:
         return json.dumps(
