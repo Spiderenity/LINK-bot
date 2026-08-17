@@ -1882,10 +1882,8 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                footer_status=(
-                    "✨ 반짝이는 것을 주웠다.\n"
-                    f"🪙 코인을 {amount}개 획득했다!"
-                ),
+                "✨ 반짝이는 것을 주웠다.",
+                footer_status=f"🪙 코인을 {amount}개 획득했다!",
             ),
             view=ExploreView(session),
         )
@@ -1938,27 +1936,34 @@ async def break_pot(interaction, session):
         amount = random.randint(2, 5) + reward_bonus
         p.coins += amount
         save_session_player(session, p)
-        footer_status = (
-            "🏺 항아리를 깼다! 반짝이는 것이 보인다.\n"
-            f"🪙 코인을 {amount}개 얻었다!"
-        )
+        note = "🏺 항아리를 깼다! 반짝이는 것이 보인다."
+        footer_status = f"🪙 코인을 {amount}개 얻었다!"
     elif roll < 0.80:
-        footer_status = "🏺 항아리를 깼다!\n아무것도 없다."
+        note = "🏺 항아리를 깼다! 아무것도 없다."
+        footer_status = ""
     else:
         damage = random.randint(1, 3)
         p.hp = max(0, p.hp - damage)
         save_session_player(session, p)
-        footer_status = (
-            "🏺 항아리를 깼다!\n"
-            f"❤️ HP가 {damage} 감소했다!"
-        )
+        note = "🏺 항아리를 깼다!"
+        footer_status = f"❤️ HP가 {damage} 감소했다!"
 
         if p.hp <= 0:
-            await player_died(interaction, session, f"🏺 항아리를 깼다. **{damage} 피해**")
+            await player_died(
+                interaction,
+                session,
+                note,
+                footer_status=footer_status,
+            )
             return
 
     await interaction.response.edit_message(
-        embed=exploration_embed(p, session, footer_status=footer_status),
+        embed=exploration_embed(
+            p,
+            session,
+            note,
+            footer_status=footer_status,
+        ),
         view=ExploreView(session),
     )
 
@@ -2322,7 +2327,7 @@ def death_description(player: PlayerState, note: str) -> str:
     )
 
 
-async def player_died(interaction, session, note):
+async def player_died(interaction, session, note, footer_status=""):
     cancel_cue(session)
     cancel_bleed(session, clear=True)
     p = session_player(session)
@@ -2332,6 +2337,8 @@ async def player_died(interaction, session, note):
     if session.is_tutorial:
         embed = player_embed(p, session, "게임 오버")
         embed.description = note + "\n\n**눈앞이 캄캄해졌다!**"
+        if footer_status:
+            embed.set_footer(text=footer_status)
         await interaction.response.edit_message(embed=embed, view=None)
         return
 
@@ -2344,6 +2351,8 @@ async def player_died(interaction, session, note):
 
     embed = player_embed(p, session, "게임 오버")
     embed.description = death_description(p, note)
+    if footer_status:
+        embed.set_footer(text=footer_status)
     await interaction.response.edit_message(embed=embed, view=None)
 
 
