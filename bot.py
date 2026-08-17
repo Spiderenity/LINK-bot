@@ -215,8 +215,8 @@ class Gear:
         for color in COLORS:
             n = self.affinity.get(color, 0)
             pips.append(f"{COLOR_MARK[color]}{str(n).translate(superscript)}")
-        stat = "공격" if self.kind == "weapon" else "방어"
-        return f"{self.name} | {stat} {self.power} | {' '.join(pips)}"
+        icon = "⚔️" if self.kind == "weapon" else "🛡️"
+        return f"{self.name} | {icon} {self.power} · {' '.join(pips)}"
 
     def to_json(self) -> str:
         return json.dumps(
@@ -534,6 +534,11 @@ def save_session_player(session: GameSession, player: PlayerState):
 
 def remaining_lives(player: PlayerState) -> int:
     return max(0, MAX_DAILY_LIVES - player.lives_used)
+
+
+def life_hearts(player: PlayerState) -> str:
+    lives = max(0, min(MAX_DAILY_LIVES, remaining_lives(player)))
+    return "❤️" * lives + "🖤" * (MAX_DAILY_LIVES - lives)
 
 
 def today_key() -> str:
@@ -1012,30 +1017,39 @@ def map_ascii(session: GameSession):
     return "\n".join("".join(row).rstrip() for row in canvas)
 
 
+def gear_affinity_line(gear: Gear) -> str:
+    superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+    return " ".join(
+        f"{COLOR_MARK[color]}{str(gear.affinity.get(color, 0)).translate(superscript)}"
+        for color in COLORS
+    )
+
+
+def combat_stat_lines(player: PlayerState) -> str:
+    return (
+        f"⚔️ `{player.weapon.power}` · {gear_affinity_line(player.weapon)}\n"
+        f"🛡️ `{player.armor.power}` · {gear_affinity_line(player.armor)}"
+    )
+
+
 
 def player_embed(player: PlayerState, session: GameSession, title: str, colour=None):
     if session.is_tutorial and not title.startswith("0층"):
         title = f"0층 · 튜토리얼 · {title}"
 
-    if session.is_tutorial:
-        resource_line = f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
-    else:
-        resource_line = (
-            f"코인 `{player.coins}` · 폭탄 `{player.bombs}`\n"
-            f"남은 목숨 `{remaining_lives(player)}/{MAX_DAILY_LIVES}`"
-        )
+    resource_line = f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
 
     embed = discord.Embed(title=title, colour=colour)
+    hp_name = "내 HP" if session.is_tutorial else f"내 HP {life_hearts(player)}"
     embed.add_field(
-        name="상태",
+        name=hp_name,
         value=(
-            f"HP {hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+            f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+            f"{combat_stat_lines(player)}\n"
             f"{resource_line}"
         ),
         inline=False,
     )
-    embed.add_field(name="무기", value=player.weapon.label(), inline=False)
-    embed.add_field(name="방패", value=player.armor.label(), inline=False)
     return embed
 
 
@@ -1125,7 +1139,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
     )
 
     embed.add_field(
-        name="적",
+        name="\u200b",
         value=colored_enemy_art(enemy, enemy_art),
         inline=False,
     )
@@ -1142,28 +1156,23 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         value=(
             f"{enemy_hp_bar(enemy)} "
             f"`{max(0, enemy.hp)}/{enemy.max_hp}`\n"
-            f"공격력 `{enemy.damage}`"
+            f"⚔️ `{enemy.damage}`"
             f"{bleed_line}{critical_line}"
         ),
         inline=False,
     )
 
+    hp_name = "내 HP" if session.is_tutorial else f"내 HP {life_hearts(player)}"
     embed.add_field(
-        name="내 HP",
+        name=hp_name,
         value=(
             f"{hp_bar(player.hp, player.max_hp)} "
             f"`{player.hp}/{player.max_hp}`\n"
+            f"{combat_stat_lines(player)}\n"
             f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
-            + (
-                ""
-                if session.is_tutorial
-                else f"\n남은 목숨 `{remaining_lives(player)}/{MAX_DAILY_LIVES}`"
-            )
         ),
         inline=False,
     )
-    embed.add_field(name="무기", value=player.weapon.label(), inline=False)
-    embed.add_field(name="방패", value=player.armor.label(), inline=False)
 
     if note:
         embed.add_field(
@@ -2230,10 +2239,10 @@ async def enemy_defeated(interaction, session, combat_note):
         )
         embed = player_embed(p, session, "전리품 발견", colour=EMBED_COLORS[enemy.color])
         embed.description = note
-        embed.add_field(name="새 장비", value=gear.label(), inline=False)
-
         current = p.weapon if gear.kind == "weapon" else p.armor
-        embed.add_field(name="현재 장비", value=current.label(), inline=False)
+        item_name = "무기" if gear.kind == "weapon" else "방패"
+        embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
+        embed.add_field(name=f"현재 {item_name}", value=current.label(), inline=False)
 
         await edit_interaction_message(
             interaction,
@@ -2983,18 +2992,17 @@ async def status(interaction: discord.Interaction):
         else remaining_lives(p)
     )
 
+    status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
-        name="자원",
+        name=f"내 HP {status_hearts}",
         value=(
-            f"HP `{p.hp}/{p.max_hp}`\n"
-            f"코인 `{p.coins}` · 폭탄 `{p.bombs}`\n"
-            f"남은 목숨 `{lives}/{MAX_DAILY_LIVES}`"
+            f"{hp_bar(p.hp, p.max_hp)} `{p.hp}/{p.max_hp}`\n"
+            f"{combat_stat_lines(p)}\n"
+            f"코인 `{p.coins}` · 폭탄 `{p.bombs}`"
         ),
         inline=False,
     )
-    embed.add_field(name="무기", value=p.weapon.label(), inline=False)
-    embed.add_field(name="방패", value=p.armor.label(), inline=False)
     embed.add_field(
         name="진행",
         value=(
