@@ -1165,22 +1165,31 @@ class ExploreView(OwnerView):
             btn.callback = pot_callback
             self.add_item(btn)
 
-        if (
-            session.boss_defeated
-            and session.current == session.boss_pos
-            and not (session.is_tutorial and session.tutorial_replay)
-        ):
-            btn = discord.ui.Button(
-                label=f"{session.floor_number + 1}층",
-                emoji="🪜",
-                style=discord.ButtonStyle.success,
-            )
+        if session.boss_defeated and session.current == session.boss_pos:
+            if session.is_tutorial and session.tutorial_replay:
+                btn = discord.ui.Button(
+                    label="튜토리얼 나가기",
+                    emoji="🪜",
+                    style=discord.ButtonStyle.success,
+                )
 
-            async def climb_callback(interaction):
-                await climb_next_floor(interaction, self.session)
+                async def leave_tutorial_callback(interaction):
+                    await leave_tutorial(interaction, self.session)
 
-            btn.callback = climb_callback
-            self.add_item(btn)
+                btn.callback = leave_tutorial_callback
+                self.add_item(btn)
+            else:
+                btn = discord.ui.Button(
+                    label=f"{session.floor_number + 1}층",
+                    emoji="🪜",
+                    style=discord.ButtonStyle.success,
+                )
+
+                async def climb_callback(interaction):
+                    await climb_next_floor(interaction, self.session)
+
+                btn.callback = climb_callback
+                self.add_item(btn)
 
 
 class BattleStartView(OwnerView):
@@ -1996,6 +2005,32 @@ async def player_died_background(interaction, session, note):
     await interaction.edit_original_response(embed=embed, view=None)
 
 
+async def leave_tutorial(interaction, session):
+    if not (
+        session.is_tutorial
+        and session.tutorial_replay
+        and session.boss_defeated
+        and session.current == session.boss_pos
+    ):
+        await interaction.response.defer()
+        return
+
+    cancel_cue(session)
+    session.ended = True
+    key = (session.guild_id, session.user_id)
+    if tutorial_sessions.get(key) is session:
+        tutorial_sessions.pop(key, None)
+
+    p = session_player(session)
+    embed = player_embed(p, session, "튜토리얼 완료")
+    embed.description = (
+        "**튜토리얼을 종료했다.**\n"
+        "언제든 `/튜토리얼`로 다시 플레이할 수 있다.\n"
+        "튜토리얼에서 얻은 아이템과 자원은 실제 진행에 반영되지 않는다."
+    )
+    await interaction.response.edit_message(embed=embed, view=None)
+
+
 async def climb_next_floor(interaction, session):
     if not session.boss_defeated or session.current != session.boss_pos:
         p = session_player(session)
@@ -2007,7 +2042,7 @@ async def climb_next_floor(interaction, session):
 
     if session.is_tutorial:
         if session.tutorial_replay:
-            await interaction.response.defer()
+            await leave_tutorial(interaction, session)
             return
 
         cancel_cue(session)
