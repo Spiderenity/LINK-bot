@@ -48,7 +48,8 @@ BLEED_MAX_STACKS = 3
 BLEED_DURATION_SECONDS = 4.0
 BLEED_TICK_SECONDS = 1.0
 BOMB_DAMAGE = (10, 14)
-DEFEAT_SHAKE_FRAME_DELAY = 0.09
+DEFEAT_SHAKE_FRAME_DELAY = 0.18
+DEFEAT_SHAKE_END_HOLD = 0.28
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 
@@ -145,13 +146,25 @@ FLOOR_TRIVIA = [
 ]
 
 
-ASCII_ART = {
-    "보스": '░░░░░░░░░░░░░░░░░░\n░░░░░▄▄████▄▄░░░░░\n░░░▄██████████▄░░░\n░▄██▄██▄██▄██▄██▄░\n░░░▀█▀░░▀▀░░▀█▀░░░\n░░░░░░░░░░░░░░░░░░\n░░░░░░░░░░░░░░░░░░',
-    "크랩": '░░░░░░░░░░░░░░░░░\n░░░░░▀▄░░░▄▀░░░░░\n░░░░▄█▀███▀█▄░░░░\n░░░█▀███████▀█░░░\n░░░█░█▀▀▀▀▀█░█░░░\n░░░░░░▀▀░▀▀░░░░░░\n░░░░░░░░░░░░░░░░░',
-    "옥토퍼스": '░░░░░░░░░░░░░░░░░\n░░░░▄▄████▄▄░░░░░\n░░░██████████░░░░\n░░░██▄▄██▄▄██░░░░\n░░░░▄▀▄▀▀▄▀▄░░░░░\n░░░▀░░░░░░░░▀░░░░\n░░░░░░░░░░░░░░░░░',
-    "스퀴드": '░░░░░░░░░░░░░░░░░\n░░░░░░▄██▄░░░░░░░\n░░░░▄██████▄░░░░░\n░░░███▄██▄███░░░░\n░░░░░▄▀▄▄▀▄░░░░░░\n░░░░▀░▀░░▀░▀░░░░░\n░░░░░░░░░░░░░░░░░',
+ENEMY_ART_FRAMES = {
+    "스퀴드": (
+        "⢀⡴⣿⢦⡀\n⢈⢝⠭⡫⡁",
+        "⢀⡴⣿⢦⡀\n⠨⡋⠛⢙⠅",
+    ),
+    "크랩": (
+        "⢀⡵⣤⡴⣅\n⠏⢟⡛⣛⠏⠇",
+        "⣆⡵⣤⡴⣅⡆\n⢘⠟⠛⠛⢟",
+    ),
+    "옥토퍼스": (
+        "⣴⡶⢿⡿⢶⣦\n⠩⣟⠫⠝⣻⠍",
+        "⣴⡶⢿⡿⢶⣦\n⣉⠽⠫⠝⠯⣉",
+    ),
+    "보스": (
+        "⢀⡴⣾⢿⡿⣷⢦⡀\n⠉⠻⠋⠙⠋⠙⠟⠉",
+    ),
 }
 
+ASCII_ART = {shape: frames[0] for shape, frames in ENEMY_ART_FRAMES.items()}
 
 
 @dataclass
@@ -213,7 +226,7 @@ class Enemy:
 @dataclass
 class Room:
     pos: Tuple[int, int]
-    kind: str = "normal"  # start, normal, boss, coin, empty, pot, shop, slot
+    kind: str = "normal"
     visited: bool = False
     cleared: bool = False
     enemy: Optional[Enemy] = None
@@ -259,16 +272,17 @@ class GameSession:
     secret_revealed: bool = False
     boss_defeated: bool = False
     ended: bool = False
-    phase: str = "explore"  # explore/battle_ready/attack/defend
+    phase: str = "explore"
     previous: Optional[Tuple[int, int]] = None
     cue_started: Optional[float] = None
     cue_kind: Optional[str] = None
-    cue_state: str = "idle"  # idle/waiting/fake/real
+    cue_state: str = "idle"
     cue_token: int = 0
     cue_task: Optional[asyncio.Task] = field(default=None, repr=False)
     bleed_token: int = 0
     bleed_task: Optional[asyncio.Task] = field(default=None, repr=False)
     hit_animating: bool = False
+    enemy_anim_frame: int = 0
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -322,7 +336,7 @@ class Database:
                     "ALTER TABLE players ADD COLUMN lives_used INTEGER NOT NULL DEFAULT 0"
                 )
             if "tutorial_completed" not in columns:
-                # Existing players are treated as already onboarded.
+
                 con.execute(
                     "ALTER TABLE players ADD COLUMN tutorial_completed INTEGER NOT NULL DEFAULT 1"
                 )
@@ -789,6 +803,25 @@ def shift_ascii_art(art: str, offset: int) -> str:
     return "\n".join(shifted)
 
 
+def current_enemy_art(session: GameSession, enemy: Enemy) -> str:
+    frames = ENEMY_ART_FRAMES.get(enemy.shape, (enemy.art,))
+    if not frames:
+        return enemy.art
+    index = session.enemy_anim_frame % len(frames)
+    return frames[index]
+
+
+def advance_enemy_art(session: GameSession, enemy: Enemy) -> str:
+    frames = ENEMY_ART_FRAMES.get(enemy.shape, (enemy.art,))
+    if not frames:
+        return enemy.art
+    if len(frames) == 1:
+        session.enemy_anim_frame = 0
+        return frames[0]
+    session.enemy_anim_frame = (session.enemy_anim_frame + 1) % len(frames)
+    return frames[session.enemy_anim_frame]
+
+
 def colored_enemy_art(enemy: Enemy, art: Optional[str] = None) -> str:
     code = ANSI_COLOR[enemy.color]
     art = enemy.art if art is None else art
@@ -1118,7 +1151,7 @@ async def animate_enemy_defeat(interaction, player, session, note):
     if enemy is None:
         return
 
-    # Only killing blows animate: center -> left -> right -> left -> center.
+
     session.hit_animating = True
     try:
         frames = (0, -1, 1, -1, 0)
@@ -1129,12 +1162,15 @@ async def animate_enemy_defeat(interaction, player, session, note):
                     player,
                     session,
                     note,
-                    enemy_art=shift_ascii_art(enemy.art, offset),
+                    enemy_art=shift_ascii_art(current_enemy_art(session, enemy), offset),
                 ),
                 view=None,
             )
             if index < len(frames) - 1:
                 await asyncio.sleep(DEFEAT_SHAKE_FRAME_DELAY)
+            else:
+
+                await asyncio.sleep(DEFEAT_SHAKE_END_HOLD)
     finally:
         session.hit_animating = False
 
@@ -1648,7 +1684,12 @@ async def cue_sequence(interaction, session, kind, token):
             line = random.choice(fakeouts if is_fake else flavor)
             p = session_player(session)
             await interaction.edit_original_response(
-                embed=combat_embed(p, session, line),
+                embed=combat_embed(
+                    p,
+                    session,
+                    line,
+                    enemy_art=advance_enemy_art(session, enemy),
+                ),
                 view=CombatView(session, kind),
             )
 
@@ -1660,7 +1701,12 @@ async def cue_sequence(interaction, session, kind, token):
 
         p = session_player(session)
         await interaction.edit_original_response(
-            embed=combat_embed(p, session, random.choice(real_cues)),
+            embed=combat_embed(
+                p,
+                session,
+                random.choice(real_cues),
+                enemy_art=advance_enemy_art(session, enemy),
+            ),
             view=CombatView(session, kind),
         )
         session.cue_state = "real"
@@ -1882,6 +1928,7 @@ async def start_battle(interaction, session):
 
     p = session_player(session)
     session.phase = "attack"
+    session.enemy_anim_frame = 0
     await interaction.response.edit_message(
         embed=combat_embed(
             p,
@@ -2111,7 +2158,7 @@ async def enemy_defeated(interaction, session, combat_note):
     if room.cleared:
         return
 
-    # Claim the defeat before the first await so simultaneous damage cannot reward twice.
+
     room.cleared = True
     cancel_cue(session)
     cancel_bleed(session, clear=True)
@@ -2673,7 +2720,7 @@ async def game(interaction: discord.Interaction):
     today = today_key()
     p = db.get_player(guild_id, user_id)
 
-    # 첫 플레이는 실제 저장과 분리된 0층 튜토리얼에서 시작한다.
+
     if not p.tutorial_completed:
         old_tutorial = tutorial_sessions.get(key)
         if (
@@ -2734,7 +2781,7 @@ async def game(interaction: discord.Interaction):
         )
         return
 
-    # 날짜가 바뀌면 장비/자원은 유지하고 새 5목숨으로 1층부터 시작한다.
+
     if p.last_day != today:
         old = sessions.pop(key, None)
         if old:
@@ -2835,7 +2882,7 @@ async def game(interaction: discord.Interaction):
             )
         return
 
-    # Railway 재시작 등으로 메모리 세션만 사라진 경우에는 저장된 층을 유지한다.
+
     p.floor_number = max(1, p.floor_number)
     session = generate_floor(guild_id, user_id, today, p.floor_number)
     sessions[key] = session
