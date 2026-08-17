@@ -1036,7 +1036,7 @@ def combat_stat_lines(player: PlayerState) -> str:
 
 
 
-def player_embed(player: PlayerState, session: GameSession, title: str, colour=None):
+def player_embed(player: PlayerState, session: GameSession, title: str, colour=None, show_resources=True):
     if session.is_tutorial and not title.startswith("0층"):
         title = f"0층 · 튜토리얼 · {title}"
 
@@ -1046,14 +1046,17 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
         else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
     )
 
+    value = (
+        f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+        f"{combat_stat_lines(player)}"
+    )
+    if show_resources:
+        value += f"\n{resource_line}"
+
     embed = discord.Embed(title=title, colour=colour)
     embed.add_field(
         name="내 HP",
-        value=(
-            f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
-            f"{combat_stat_lines(player)}\n"
-            f"{resource_line}"
-        ),
+        value=value,
         inline=False,
     )
     return embed
@@ -1162,7 +1165,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
     embed.description = colored_enemy_art(enemy, enemy_art)
     bleed_left = bleed_seconds_left(enemy)
     bleed_line = (
-        f"\n🩸 출혈 `{enemy.bleed_stacks}` · `{bleed_left:.1f}초`"
+        f" · {'🩸' * enemy.bleed_stacks} `{bleed_left:.1f}초`"
         if bleed_left > 0
         else ""
     )
@@ -2088,7 +2091,6 @@ async def press_timing(interaction, session, kind):
             if enemy.hp > 0:
                 stacks = apply_bleed(enemy)
                 schedule_bleed(interaction, session)
-                note += f"\n🩸 출혈 **{stacks}** · {BLEED_DURATION_SECONDS:.0f}초"
         elif grade == "GOOD":
             note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
         else:
@@ -2272,7 +2274,13 @@ async def enemy_defeated(interaction, session, combat_note):
             boss_drop=enemy.boss,
             floor_number=session.floor_number,
         )
-        embed = player_embed(p, session, "전리품 발견", colour=EMBED_COLORS[enemy.color])
+        embed = player_embed(
+            p,
+            session,
+            "전리품 발견",
+            colour=EMBED_COLORS[enemy.color],
+            show_resources=False,
+        )
         embed.description = combat_note
         embed.set_footer(text=reward_status)
         current = p.weapon if gear.kind == "weapon" else p.armor
