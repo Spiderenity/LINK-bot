@@ -902,7 +902,10 @@ def incoming_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
 
     damage = max(0, damage - player.armor.power)
     resistance = max(0.35, 1.0 - 0.15 * affinity(player.armor, enemy.color))
-    return max(0, round(damage * resistance))
+    result = max(0, round(damage * resistance))
+    if grade == "MISS":
+        return max(1, result)
+    return result
 
 
 def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
@@ -1261,7 +1264,7 @@ def slot_cost(room, floor_number: int):
     return 10 * (room.slot_uses + 1) + max(0, floor_number - 1) * 2
 
 
-def slot_embed(player, session, note=""):
+def slot_embed(player, session, note="", footer_status=""):
     room = session.room()
     embed = player_embed(player, session, "🎰 슬롯머신")
     if note:
@@ -1275,6 +1278,8 @@ def slot_embed(player, session, note=""):
         ),
         inline=False,
     )
+    if footer_status:
+        embed.set_footer(text=footer_status)
     return embed
 
 
@@ -1511,7 +1516,6 @@ class LootView(OwnerView):
                 interaction,
                 session,
                 f"{gear.name} 장착 완료.",
-                footer_note=True,
             )
 
         async def skip_callback(interaction):
@@ -1519,7 +1523,6 @@ class LootView(OwnerView):
                 interaction,
                 session,
                 "새 장비를 버렸다.",
-                footer_note=True,
             )
 
         equip.callback = equip_callback
@@ -1879,7 +1882,10 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                f"🪙 코인 **{amount}개**를 주웠다.",
+                footer_status=(
+                    "✨ 반짝이는 것을 주웠다.\n"
+                    f"🪙 코인을 {amount}개 획득했다!"
+                ),
             ),
             view=ExploreView(session),
         )
@@ -1932,21 +1938,27 @@ async def break_pot(interaction, session):
         amount = random.randint(2, 5) + reward_bonus
         p.coins += amount
         save_session_player(session, p)
-        note = f"🏺 항아리를 깼다! 코인 **{amount}개**가 나왔다."
+        footer_status = (
+            "🏺 항아리를 깼다! 반짝이는 것이 보인다.\n"
+            f"🪙 코인을 {amount}개 얻었다!"
+        )
     elif roll < 0.80:
-        note = "🏺 항아리를 깼다. 아무것도 없었다."
+        footer_status = "🏺 항아리를 깼다!\n아무것도 없다."
     else:
         damage = random.randint(1, 3)
         p.hp = max(0, p.hp - damage)
         save_session_player(session, p)
-        note = f"🏺 항아리를 깼다. **{damage} 피해**"
+        footer_status = (
+            "🏺 항아리를 깼다!\n"
+            f"❤️ HP가 {damage} 감소했다!"
+        )
 
         if p.hp <= 0:
-            await player_died(interaction, session, note)
+            await player_died(interaction, session, f"🏺 항아리를 깼다. **{damage} 피해**")
             return
 
     await interaction.response.edit_message(
-        embed=exploration_embed(p, session, note),
+        embed=exploration_embed(p, session, footer_status=footer_status),
         view=ExploreView(session),
     )
 
@@ -2241,9 +2253,10 @@ async def enemy_defeated(interaction, session, combat_note):
     p.bombs += bomb_gain
     save_session_player(session, p)
 
-    note = f"{combat_note}\n\n코인 **+{coins}**"
+    reward_lines = [f"🪙 코인을 {coins}개 획득했다!"]
     if bomb_gain:
-        note += " · 폭탄 **+1**"
+        reward_lines.append("💣 폭탄을 1개 획득했다!")
+    reward_status = "\n".join(reward_lines)
 
     if enemy.boss:
         session.boss_defeated = True
@@ -2255,7 +2268,8 @@ async def enemy_defeated(interaction, session, combat_note):
             floor_number=session.floor_number,
         )
         embed = player_embed(p, session, "전리품 발견", colour=EMBED_COLORS[enemy.color])
-        embed.description = note
+        embed.description = combat_note
+        embed.set_footer(text=reward_status)
         current = p.weapon if gear.kind == "weapon" else p.armor
         item_name = "무기" if gear.kind == "weapon" else "방패"
         embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
@@ -2268,25 +2282,23 @@ async def enemy_defeated(interaction, session, combat_note):
         )
         return
 
-    await show_after_clear(interaction, session, note)
-
-
-async def show_after_clear(interaction, session, note, footer_note=False):
-    p = session_player(session)
-    use_footer = (
-        footer_note
-        and session.boss_defeated
-        and session.current == session.boss_pos
-        and not session.is_tutorial
+    await show_after_clear(
+        interaction,
+        session,
+        combat_note,
+        footer_status=reward_status,
     )
 
+
+async def show_after_clear(interaction, session, note, footer_status=""):
+    p = session_player(session)
     await edit_interaction_message(
         interaction,
         embed=exploration_embed(
             p,
             session,
-            "" if use_footer else note,
-            footer_status=note if use_footer else "",
+            note,
+            footer_status=footer_status,
         ),
         view=ExploreView(session),
     )
@@ -2600,36 +2612,45 @@ async def play_slot(interaction, session):
     roll = random.random()
     reward_bonus = max(0, (session.floor_number - 1) // 2)
 
+    note = ""
+    footer_lines = []
     if roll < 0.45:
         note = "아무것도 안 나왔다."
     elif roll < 0.68:
         gain = random.randint(2, 4) + reward_bonus
         p.coins += gain
-        note = f"코인 **+{gain}**"
+        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
     elif roll < 0.80:
         p.bombs += 1
-        note = "폭탄 **+1**"
+        footer_lines.append("💣 폭탄을 1개 획득했다!")
     elif roll < 0.91:
         heal = random.randint(3, 6)
         before = p.hp
         p.hp = min(p.max_hp, p.hp + heal)
-        note = f"HP **+{p.hp - before}**"
+        restored = p.hp - before
+        footer_lines.append(f"❤️ HP가 {restored} 회복됐다!")
     else:
         gain = random.randint(6, 10) + reward_bonus * 2
         p.coins += gain
-        note = f"잭팟! 코인 **+{gain}**"
+        note = "🎰 잭팟!"
+        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
 
     break_rates = [0.05, 0.10, 0.20, 0.35, 0.55, 0.75]
     break_rate = break_rates[min(room.slot_uses - 1, len(break_rates) - 1)]
 
     if random.random() < break_rate:
         room.slot_broken = True
-        note += "\n\n**철컥.** 슬롯머신이 멈췄다."
+        note = f"{note}\n\n**철컥.** 슬롯머신이 멈췄다." if note else "**철컥.** 슬롯머신이 멈췄다."
 
     save_session_player(session, p)
 
     await interaction.response.edit_message(
-        embed=slot_embed(p, session, note),
+        embed=slot_embed(
+            p,
+            session,
+            note,
+            footer_status="\n".join(footer_lines),
+        ),
         view=SlotView(session),
     )
 
@@ -2664,7 +2685,8 @@ async def bomb_slot(interaction, session):
         embed=slot_embed(
             p,
             session,
-            f"💣 슬롯머신 폭파!\n코인 **+{gain}**",
+            "💣 슬롯머신 폭파!",
+            footer_status=f"🪙 코인을 {gain}개 획득했다!",
         ),
         view=SlotView(session),
     )
