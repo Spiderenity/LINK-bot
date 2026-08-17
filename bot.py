@@ -286,6 +286,7 @@ class PlayerState:
     status: str
     floor_number: int
     highest_floor: int
+    checkpoint_floor: int
     lives_used: int
     tutorial_completed: bool
 
@@ -350,6 +351,7 @@ class Database:
                     status TEXT NOT NULL DEFAULT 'ready',
                     floor_number INTEGER NOT NULL DEFAULT 1,
                     highest_floor INTEGER NOT NULL DEFAULT 1,
+                    checkpoint_floor INTEGER NOT NULL DEFAULT 0,
                     lives_used INTEGER NOT NULL DEFAULT 0,
                     tutorial_completed INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (guild_id, user_id)
@@ -367,6 +369,13 @@ class Database:
                 con.execute(
                     "ALTER TABLE players ADD COLUMN highest_floor INTEGER NOT NULL DEFAULT 1"
                 )
+            if "checkpoint_floor" not in columns:
+                con.execute(
+                    "ALTER TABLE players ADD COLUMN checkpoint_floor INTEGER NOT NULL DEFAULT 0"
+                )
+                con.execute(
+                    "UPDATE players SET checkpoint_floor = CAST((MAX(highest_floor, 1) - 1) / 5 AS INTEGER) * 5"
+                )
             if "lives_used" not in columns:
                 con.execute(
                     "ALTER TABLE players ADD COLUMN lives_used INTEGER NOT NULL DEFAULT 0"
@@ -383,7 +392,7 @@ class Database:
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
                        weapon_json, armor_json, last_day, status, floor_number,
-                       highest_floor, lives_used, tutorial_completed
+                       highest_floor, checkpoint_floor, lives_used, tutorial_completed
                 FROM players
                 WHERE guild_id=? AND user_id=?
                 """,
@@ -396,8 +405,8 @@ class Database:
                     INSERT INTO players
                     (guild_id, user_id, coins, bombs, max_hp, hp,
                      weapon_json, armor_json, last_day, status, floor_number,
-                     highest_floor, lives_used, tutorial_completed)
-                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1, 1, 0, 0)
+                     highest_floor, checkpoint_floor, lives_used, tutorial_completed)
+                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1, 1, 0, 0, 0)
                     """,
                     (
                         guild_id,
@@ -422,8 +431,9 @@ class Database:
             status=row[9],
             floor_number=row[10],
             highest_floor=row[11],
-            lives_used=row[12],
-            tutorial_completed=bool(row[13]),
+            checkpoint_floor=row[12],
+            lives_used=row[13],
+            tutorial_completed=bool(row[14]),
         )
 
     def save_player(self, p: PlayerState):
@@ -433,7 +443,7 @@ class Database:
                 UPDATE players
                 SET coins=?, bombs=?, max_hp=?, hp=?,
                     weapon_json=?, armor_json=?, last_day=?, status=?,
-                    floor_number=?, highest_floor=?, lives_used=?,
+                    floor_number=?, highest_floor=?, checkpoint_floor=?, lives_used=?,
                     tutorial_completed=?
                 WHERE guild_id=? AND user_id=?
                 """,
@@ -448,6 +458,7 @@ class Database:
                     p.status,
                     p.floor_number,
                     p.highest_floor,
+                    p.checkpoint_floor,
                     p.lives_used,
                     int(p.tutorial_completed),
                     p.guild_id,
@@ -475,7 +486,7 @@ class Database:
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
                        weapon_json, armor_json, last_day, status, floor_number,
-                       highest_floor, lives_used, tutorial_completed
+                       highest_floor, checkpoint_floor, lives_used, tutorial_completed
                 FROM players
                 WHERE guild_id=?
                 ORDER BY floor_number DESC, coins DESC, user_id ASC
@@ -497,8 +508,9 @@ class Database:
                 status=row[9],
                 floor_number=row[10],
                 highest_floor=row[11],
-                lives_used=row[12],
-                tutorial_completed=bool(row[13]),
+                checkpoint_floor=row[12],
+                lives_used=row[13],
+                tutorial_completed=bool(row[14]),
             )
             for row in rows
         ]
@@ -508,7 +520,7 @@ class Database:
         p.hp = p.max_hp
         p.last_day = ""
         p.status = "ready"
-        p.floor_number = 1
+        p.floor_number = max(1, p.checkpoint_floor + 1)
         p.lives_used = 0
         self.save_player(p)
 
@@ -539,6 +551,10 @@ def remaining_lives(player: PlayerState) -> int:
 def life_hearts(player: PlayerState) -> str:
     lives = max(0, min(MAX_DAILY_LIVES, remaining_lives(player)))
     return "❤️" * lives + "🖤" * (MAX_DAILY_LIVES - lives)
+
+
+def checkpoint_start_floor(player: PlayerState) -> int:
+    return max(1, player.checkpoint_floor + 1)
 
 
 def today_key() -> str:
@@ -728,6 +744,7 @@ def make_tutorial_player(guild_id: int, user_id: int) -> PlayerState:
         status="tutorial",
         floor_number=0,
         highest_floor=0,
+        checkpoint_floor=0,
         lives_used=0,
         tutorial_completed=False,
     )
@@ -906,6 +923,32 @@ def incoming_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
     if grade == "MISS":
         return max(1, result)
     return result
+
+
+def enemy_should_flee(player: PlayerState, enemy: Enemy) -> bool:
+    if enemy.boss:
+        return False
+    return (
+        attack_damage(player, enemy, "GOOD") >= enemy.max_hp
+        and incoming_damage(player, enemy, "MISS") <= 1
+    )
+
+
+def flee_overpowered_enemy(session: GameSession, player: PlayerState) -> str:
+    room = session.room()
+    enemy = room.enemy
+    if (
+        session.is_tutorial
+        or room.kind != "normal"
+        or room.cleared
+        or enemy is None
+        or not enemy_should_flee(player, enemy)
+    ):
+        return ""
+    room.cleared = True
+    session.phase = "explore"
+    cancel_bleed(session, clear=True)
+    return f"👾 **{enemy.color} {enemy.shape}가 도망갔다!**"
 
 
 def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
@@ -1847,6 +1890,14 @@ async def move_player(interaction, session, direction, target):
     room.visited = True
     p = session_player(session)
 
+    flee_note = flee_overpowered_enemy(session, p)
+    if flee_note:
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, flee_note),
+            view=ExploreView(session),
+        )
+        return
+
     if room.kind in ("normal", "boss") and not room.cleared:
         session.phase = "battle_ready"
         encounter_note = f"**{room.enemy.color} {room.enemy.shape}**이(가) 나타났다!"
@@ -2009,6 +2060,14 @@ async def start_battle(interaction, session):
         return
 
     p = session_player(session)
+    flee_note = flee_overpowered_enemy(session, p)
+    if flee_note:
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, flee_note),
+            view=ExploreView(session),
+        )
+        return
+
     session.phase = "attack"
     session.enemy_anim_frame = 0
     await interaction.response.edit_message(
@@ -2267,6 +2326,9 @@ async def enemy_defeated(interaction, session, combat_note):
 
     if enemy.boss:
         session.boss_defeated = True
+        if session.floor_number % 5 == 0 and not session.is_tutorial:
+            p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
+            save_session_player(session, p)
 
     if enemy.boss or random.random() < 0.30:
         gear = generate_gear(
@@ -2331,7 +2393,11 @@ def death_description(player: PlayerState, note: str) -> str:
         note
         + "\n\n**눈앞이 캄캄해졌다!**"
         + f"\n남은 목숨 **{left}/{MAX_DAILY_LIVES}**"
-        + "\n`/게임`으로 1층부터 다시 도전하자!"
+        + (
+            "\n`/게임`으로 체크포인트에서 다시 도전하자!"
+            if player.checkpoint_floor > 0
+            else "\n`/게임`으로 1층부터 다시 도전하자!"
+        )
     )
 
 
@@ -2896,19 +2962,24 @@ async def game(interaction: discord.Interaction):
         p.hp = p.max_hp
         p.last_day = today
         p.status = "playing"
-        p.floor_number = 1
+        p.floor_number = checkpoint_start_floor(p)
         p.lives_used = 0
-        p.highest_floor = max(p.highest_floor, 1)
+        p.highest_floor = max(p.highest_floor, p.floor_number)
         db.save_player(p)
 
-        session = generate_floor(guild_id, user_id, today, 1)
+        session = generate_floor(guild_id, user_id, today, p.floor_number)
         sessions[key] = session
 
+        start_note = (
+            f"**체크포인트로 돌아왔다.**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`"
+            if p.checkpoint_floor > 0
+            else f"**1층 시작!**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`"
+        )
         await interaction.response.send_message(
             embed=exploration_embed(
                 p,
                 session,
-                f"**1층 시작!**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`",
+                start_note,
             ),
             view=ExploreView(session),
             ephemeral=True,
@@ -2932,19 +3003,24 @@ async def game(interaction: discord.Interaction):
 
         p.hp = p.max_hp
         p.status = "playing"
-        p.floor_number = 1
+        p.floor_number = checkpoint_start_floor(p)
         db.save_player(p)
 
-        session = generate_floor(guild_id, user_id, today, 1)
+        session = generate_floor(guild_id, user_id, today, p.floor_number)
         sessions[key] = session
+        restart_note = (
+            f"**체크포인트로 돌아왔다.**\n남은 목숨 `{remaining_lives(p)}/{MAX_DAILY_LIVES}`"
+            if p.checkpoint_floor > 0
+            else (
+                "**다시 도전!**\n"
+                f"남은 목숨 `{remaining_lives(p)}/{MAX_DAILY_LIVES}` · 1층부터 시작한다."
+            )
+        )
         await interaction.response.send_message(
             embed=exploration_embed(
                 p,
                 session,
-                (
-                    "**다시 도전!**\n"
-                    f"남은 목숨 `{remaining_lives(p)}/{MAX_DAILY_LIVES}` · 1층부터 시작한다."
-                ),
+                restart_note,
             ),
             view=ExploreView(session),
             ephemeral=True,
@@ -2960,6 +3036,14 @@ async def game(interaction: discord.Interaction):
         room = old.room()
 
         if room.kind in ("normal", "boss") and not room.cleared:
+            flee_note = flee_overpowered_enemy(old, p)
+            if flee_note:
+                await interaction.response.send_message(
+                    embed=exploration_embed(p, old, flee_note),
+                    view=ExploreView(old),
+                    ephemeral=True,
+                )
+                return
             cancel_cue(old)
             old.phase = "battle_ready"
             await interaction.response.send_message(
