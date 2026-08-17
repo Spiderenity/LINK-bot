@@ -2026,7 +2026,7 @@ async def leave_tutorial(interaction, session):
     embed.description = (
         "**튜토리얼을 종료했다.**\n"
         "언제든 `/튜토리얼`로 다시 플레이할 수 있다.\n"
-        "튜토리얼에서 얻은 아이템과 자원은 실제 진행에 반영되지 않는다."
+        "튜토리얼에서 얻은 아이템은 실제 게임에 반영되지 않는다."
     )
     await interaction.response.edit_message(embed=embed, view=None)
 
