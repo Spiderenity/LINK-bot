@@ -38,7 +38,7 @@ EMBED_COLORS = {
 }
 DIR_EMOJI = {"위": "⬆️", "오른쪽": "➡️", "아래": "⬇️", "왼쪽": "⬅️"}
 RUN_SUCCESS_RATE = 0.65
-MAX_DAILY_LIVES = 5
+MAX_DAILY_LIVES = 3
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 
