@@ -1168,18 +1168,13 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         inline=False,
     )
 
-    resources = (
-        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
-        if session.is_tutorial
-        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
-    )
     embed.add_field(
         name="내 HP",
         value=(
             f"{hp_bar(player.hp, player.max_hp)} "
             f"`{player.hp}/{player.max_hp}`\n"
             f"{combat_stat_lines(player)}\n"
-            f"{resources}"
+            f"💣 `{player.bombs}`"
         ),
         inline=False,
     )
