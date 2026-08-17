@@ -1056,7 +1056,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
     return embed
 
 
-def exploration_embed(player, session, note=""):
+def exploration_embed(player, session, note="", footer_status=""):
     room = session.room()
     title = (
         f"0층 · 튜토리얼 · {room_name(room)}"
@@ -1112,18 +1112,26 @@ def exploration_embed(player, session, note=""):
         description="\n\n".join(parts),
     )
 
+    footer_lines = []
+    if footer_status:
+        footer_lines.append(footer_status)
+
     if session.boss_defeated:
         if session.is_tutorial:
             if not session.tutorial_replay and session.current == session.boss_pos:
-                embed.set_footer(text="⚠️ 튜토리얼의 아이템은 사라져요!")
+                footer_lines.append("⚠️ 튜토리얼의 아이템은 사라져요!")
         elif session.current == session.boss_pos:
-            embed.set_footer(
-                text=f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
+            footer_lines.append("보스를 처치했다!")
+            footer_lines.append(
+                f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
             )
         else:
-            embed.set_footer(
-                text=f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
+            footer_lines.append(
+                f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
             )
+
+    if footer_lines:
+        embed.set_footer(text="\n".join(footer_lines))
     return embed
 
 
@@ -1502,7 +1510,8 @@ class LootView(OwnerView):
             await show_after_clear(
                 interaction,
                 session,
-                f"**{gear.name}** 장착 완료.",
+                f"{gear.name} 장착 완료.",
+                footer_note=True,
             )
 
         async def skip_callback(interaction):
@@ -1510,6 +1519,7 @@ class LootView(OwnerView):
                 interaction,
                 session,
                 "새 장비를 버렸다.",
+                footer_note=True,
             )
 
         equip.callback = equip_callback
@@ -2261,19 +2271,23 @@ async def enemy_defeated(interaction, session, combat_note):
     await show_after_clear(interaction, session, note)
 
 
-async def show_after_clear(interaction, session, note):
+async def show_after_clear(interaction, session, note, footer_note=False):
     p = session_player(session)
-
-    if session.boss_defeated and session.current == session.boss_pos:
-        if not session.is_tutorial:
-            note += (
-                "\n\n**보스를 처치했다!** "
-                f"🪜 **{session.floor_number + 1}층**으로 갈 수 있다."
-            )
+    use_footer = (
+        footer_note
+        and session.boss_defeated
+        and session.current == session.boss_pos
+        and not session.is_tutorial
+    )
 
     await edit_interaction_message(
         interaction,
-        embed=exploration_embed(p, session, note),
+        embed=exploration_embed(
+            p,
+            session,
+            "" if use_footer else note,
+            footer_status=note if use_footer else "",
+        ),
         view=ExploreView(session),
     )
 
