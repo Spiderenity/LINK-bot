@@ -1427,6 +1427,7 @@ class CombatView(OwnerView):
 
         if kind == "attack":
             attack = discord.ui.Button(
+                label="공격하기",
                 emoji="⚔️",
                 style=discord.ButtonStyle.danger,
             )
@@ -1451,6 +1452,7 @@ class CombatView(OwnerView):
 
         else:
             shield = discord.ui.Button(
+                label="방어하기",
                 emoji="🛡️",
                 style=discord.ButtonStyle.success,
             )
