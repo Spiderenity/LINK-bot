@@ -1109,7 +1109,7 @@ def exploration_embed(player, session, note=""):
 
     embed = discord.Embed(
         title=title,
-        description="\n\n".join(parts),
+        description="\n".join(parts),
     )
 
     if session.boss_defeated:
