@@ -22,6 +22,10 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "플레이어 현황")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 KST = ZoneInfo("Asia/Seoul")
 DB_PATH = Path("/data/game.db")
 
@@ -370,14 +374,46 @@ class Database:
         with self.connect() as con:
             return con.execute(
                 """
-                SELECT user_id, coins
+                SELECT user_id, floor_number, coins
                 FROM players
                 WHERE guild_id=?
-                ORDER BY coins DESC, user_id ASC
+                ORDER BY floor_number DESC, coins DESC, user_id ASC
                 LIMIT ?
                 """,
                 (guild_id, limit),
             ).fetchall()
+
+    def all_players(self, guild_id: int):
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT guild_id, user_id, coins, bombs, max_hp, hp,
+                       weapon_json, armor_json, last_day, status, floor_number,
+                       highest_floor
+                FROM players
+                WHERE guild_id=?
+                ORDER BY floor_number DESC, coins DESC, user_id ASC
+                """,
+                (guild_id,),
+            ).fetchall()
+
+        return [
+            PlayerState(
+                guild_id=row[0],
+                user_id=row[1],
+                coins=row[2],
+                bombs=row[3],
+                max_hp=row[4],
+                hp=row[5],
+                weapon=Gear.from_json(row[6]),
+                armor=Gear.from_json(row[7]),
+                last_day=row[8],
+                status=row[9],
+                floor_number=row[10],
+                highest_floor=row[11],
+            )
+            for row in rows
+        ]
 
     def test_reset(self, guild_id: int, user_id: int):
         p = self.get_player(guild_id, user_id)
@@ -2028,6 +2064,87 @@ async def bomb_slot(interaction, session):
     )
 
 
+SHEET_HEADERS = [
+    "이름",
+    "사용자 ID",
+    "현재 층",
+    "최고 층",
+    "코인",
+    "무기",
+    "공격력",
+    "방패",
+    "방어력",
+    "폭탄",
+    "HP",
+    "상태",
+    "마지막 플레이",
+]
+
+
+def sync_players_to_google_sheet(rows: list[list[object]]):
+    if not GOOGLE_SHEET_ID:
+        raise RuntimeError("GOOGLE_SHEET_ID가 설정되어 있지 않습니다.")
+
+    try:
+        import gspread
+    except ImportError as exc:
+        raise RuntimeError("gspread가 설치되어 있지 않습니다. `pip install gspread`가 필요합니다.") from exc
+
+    if GOOGLE_SERVICE_ACCOUNT_JSON:
+        try:
+            credentials = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON 형식이 올바르지 않습니다.") from exc
+        client = gspread.service_account_from_dict(credentials)
+    elif GOOGLE_SERVICE_ACCOUNT_FILE:
+        client = gspread.service_account(filename=GOOGLE_SERVICE_ACCOUNT_FILE)
+    else:
+        raise RuntimeError(
+            "GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_SERVICE_ACCOUNT_FILE이 필요합니다."
+        )
+
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+
+    try:
+        worksheet = spreadsheet.worksheet(GOOGLE_SHEET_WORKSHEET)
+    except gspread.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=GOOGLE_SHEET_WORKSHEET,
+            rows=max(100, len(rows) + 20),
+            cols=len(SHEET_HEADERS),
+        )
+
+    existing = worksheet.get_all_values()
+    existing_by_user_id: dict[str, int] = {}
+    for row_number, row in enumerate(existing[1:], start=2):
+        if len(row) >= 2 and row[1].strip():
+            existing_by_user_id[row[1].strip()] = row_number
+
+    updates = [
+        {
+            "range": f"A1:M1",
+            "values": [SHEET_HEADERS],
+        }
+    ]
+
+    next_row = max(2, len(existing) + 1)
+    for row in rows:
+        user_id = str(row[1])
+        row_number = existing_by_user_id.get(user_id)
+        if row_number is None:
+            row_number = next_row
+            next_row += 1
+        updates.append(
+            {
+                "range": f"A{row_number}:M{row_number}",
+                "values": [row],
+            }
+        )
+
+    worksheet.batch_update(updates, value_input_option="RAW")
+    worksheet.freeze(rows=1)
+    return spreadsheet.url, len(rows)
+
 
 intents = discord.Intents.default()
 
@@ -2183,7 +2300,7 @@ async def status(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="점수판", description="보유 코인 순위를 확인합니다.")
+@bot.tree.command(name="점수판", description="현재 층을 기준으로 진행 순위를 확인합니다.")
 async def leaderboard(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
@@ -2195,16 +2312,83 @@ async def leaderboard(interaction: discord.Interaction):
     rows = db.leaderboard(interaction.guild_id)
     lines = []
 
-    for rank, (user_id, coins) in enumerate(rows, 1):
+    for rank, (user_id, floor_number, coins) in enumerate(rows, 1):
         member = interaction.guild.get_member(user_id)
         name = member.display_name if member else f"<@{user_id}>"
-        lines.append(f"`{rank:>2}.` {name} — **{coins} 코인**")
+        lines.append(
+            f"`{rank:>2}.` {name} — **{floor_number}층** · `{coins} 코인`"
+        )
 
     embed = discord.Embed(
-        title="코인 순위",
+        title="진행 순위",
         description="\n".join(lines) if lines else "아직 기록이 없다.",
     )
     await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(
+    name="시트업데이트",
+    description="모든 플레이어의 진행 상황을 구글 시트에 업데이트합니다.",
+)
+async def sheet_update(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message(
+            "서버 안에서만 사용할 수 있습니다.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    players = db.all_players(interaction.guild_id)
+    sheet_rows = []
+
+    for p in players:
+        member = interaction.guild.get_member(p.user_id)
+        if member is not None:
+            name = member.display_name
+        else:
+            try:
+                user = await bot.fetch_user(p.user_id)
+                name = user.global_name or user.name
+            except discord.HTTPException:
+                name = str(p.user_id)
+
+        sheet_rows.append(
+            [
+                name,
+                str(p.user_id),
+                p.floor_number,
+                p.highest_floor,
+                p.coins,
+                p.weapon.name,
+                p.weapon.power,
+                p.armor.name,
+                p.armor.power,
+                p.bombs,
+                f"{p.hp}/{p.max_hp}",
+                p.status,
+                p.last_day or "미시작",
+            ]
+        )
+
+    try:
+        sheet_url, count = await asyncio.to_thread(
+            sync_players_to_google_sheet,
+            sheet_rows,
+        )
+    except Exception as exc:
+        await interaction.edit_original_response(
+            content=f"시트 업데이트에 실패했습니다.\n`{type(exc).__name__}: {exc}`"
+        )
+        return
+
+    await interaction.edit_original_response(
+        content=(
+            f"구글 시트를 업데이트했습니다. **{count}명**의 진행 상황을 반영했습니다.\n"
+            f"{sheet_url}"
+        )
+    )
 
 
 @bot.tree.command(
