@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import random
 import sqlite3
@@ -40,11 +41,14 @@ DIR_EMOJI = {"위": "⬆️", "오른쪽": "➡️", "아래": "⬇️", "왼쪽
 RUN_SUCCESS_RATE = 0.65
 MAX_DAILY_LIVES = 3
 PERFECT_WINDOW_BONUS = 0.10
+CRITICAL_HP_RATIO = 0.25
+CRITICAL_PERFECT_WINDOW_BONUS = 0.20
 PERFECT_COUNTER_DAMAGE = 2
 BLEED_MAX_STACKS = 3
-BLEED_DURATION = 2
+BLEED_DURATION_SECONDS = 4.0
+BLEED_TICK_SECONDS = 1.0
 BOMB_DAMAGE = (10, 14)
-HIT_FRAME_DELAY = 0.16
+DEFEAT_SHAKE_FRAME_DELAY = 0.09
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 
@@ -199,7 +203,7 @@ class Enemy:
     damage: int
     boss: bool = False
     bleed_stacks: int = 0
-    bleed_turns: int = 0
+    bleed_expires_at: float = 0.0
 
     @property
     def art(self) -> str:
@@ -262,6 +266,9 @@ class GameSession:
     cue_state: str = "idle"  # idle/waiting/fake/real
     cue_token: int = 0
     cue_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    bleed_token: int = 0
+    bleed_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    hit_animating: bool = False
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -734,6 +741,39 @@ def hp_bar(current: int, maximum: int, width=8, enemy=False):
     return full * filled + "⬛" * (width - filled)
 
 
+def bleed_seconds_left(enemy: Enemy) -> float:
+    if enemy.bleed_stacks <= 0 or enemy.bleed_expires_at <= 0 or enemy.hp <= 0:
+        return 0.0
+    return max(0.0, enemy.bleed_expires_at - time.monotonic())
+
+
+def bleed_pending_damage(enemy: Enemy) -> int:
+    seconds = bleed_seconds_left(enemy)
+    if seconds <= 0:
+        return 0
+    ticks = max(0, math.ceil((seconds - 0.001) / BLEED_TICK_SECONDS))
+    return min(max(0, enemy.hp), enemy.bleed_stacks * ticks)
+
+
+def enemy_hp_bar(enemy: Enemy, width=8) -> str:
+    current = max(0, enemy.hp)
+    maximum = max(1, enemy.max_hp)
+    filled = max(0, min(width, round(width * current / maximum)))
+    pending = bleed_pending_damage(enemy)
+
+    yellow = 0
+    if pending > 0 and filled > 0:
+        yellow = max(1, round(width * min(current, pending) / maximum))
+        yellow = min(filled, yellow)
+
+    red = filled - yellow
+    return "🟥" * red + "🟨" * yellow + "⬛" * (width - filled)
+
+
+def enemy_is_critical(enemy: Enemy) -> bool:
+    return 0 < enemy.hp <= enemy.max_hp * CRITICAL_HP_RATIO
+
+
 def shift_ascii_art(art: str, offset: int) -> str:
     if offset == 0:
         return art
@@ -757,21 +797,13 @@ def colored_enemy_art(enemy: Enemy, art: Optional[str] = None) -> str:
 
 def apply_bleed(enemy: Enemy) -> int:
     enemy.bleed_stacks = min(BLEED_MAX_STACKS, enemy.bleed_stacks + 1)
-    enemy.bleed_turns = BLEED_DURATION
+    enemy.bleed_expires_at = time.monotonic() + BLEED_DURATION_SECONDS
     return enemy.bleed_stacks
 
 
-def tick_bleed(enemy: Enemy) -> int:
-    if enemy.bleed_stacks <= 0 or enemy.bleed_turns <= 0 or enemy.hp <= 0:
-        return 0
-
-    damage = enemy.bleed_stacks
-    enemy.hp -= damage
-    enemy.bleed_turns -= 1
-    if enemy.bleed_turns <= 0:
-        enemy.bleed_stacks = 0
-        enemy.bleed_turns = 0
-    return damage
+def clear_bleed(enemy: Enemy):
+    enemy.bleed_stacks = 0
+    enemy.bleed_expires_at = 0.0
 
 
 def affinity(gear: Gear, color: str) -> int:
@@ -804,7 +836,11 @@ def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
 
     if kind == "attack":
         good = spec["attack_good"]
-        perfect = min(good, spec["attack_perfect"] + PERFECT_WINDOW_BONUS)
+        critical_bonus = CRITICAL_PERFECT_WINDOW_BONUS if enemy_is_critical(enemy) else 0.0
+        perfect = min(
+            good,
+            spec["attack_perfect"] + PERFECT_WINDOW_BONUS + critical_bonus,
+        )
         return perfect, good
 
     extra = 0.05 * affinity(player.armor, enemy.color)
@@ -1024,17 +1060,21 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         value=colored_enemy_art(enemy, enemy_art),
         inline=False,
     )
+    bleed_left = bleed_seconds_left(enemy)
+    bleed_line = (
+        f"\n🩸 출혈 `{enemy.bleed_stacks}` · `{bleed_left:.1f}초`"
+        if bleed_left > 0
+        else ""
+    )
+    critical_line = "\n⚠️ **CRITICAL!**" if enemy_is_critical(enemy) else ""
+
     embed.add_field(
         name="적 HP",
         value=(
-            f"{hp_bar(max(0, enemy.hp), enemy.max_hp, enemy=True)} "
+            f"{enemy_hp_bar(enemy)} "
             f"`{max(0, enemy.hp)}/{enemy.max_hp}`\n"
             f"공격력 `{enemy.damage}`"
-            + (
-                f"\n🩸 출혈 `{enemy.bleed_stacks}` · 남은 행동 `{enemy.bleed_turns}`"
-                if enemy.bleed_stacks > 0 and enemy.bleed_turns > 0
-                else ""
-            )
+            f"{bleed_line}{critical_line}"
         ),
         inline=False,
     )
@@ -1073,29 +1113,30 @@ async def edit_interaction_message(interaction, *, embed, view):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-async def animate_enemy_hit(interaction, player, session, note, final_view=None):
+async def animate_enemy_defeat(interaction, player, session, note):
     enemy = session.room().enemy
     if enemy is None:
         return
 
-    for offset in (-1, 1):
-        await edit_interaction_message(
-            interaction,
-            embed=combat_embed(
-                player,
-                session,
-                note,
-                enemy_art=shift_ascii_art(enemy.art, offset),
-            ),
-            view=None,
-        )
-        await asyncio.sleep(HIT_FRAME_DELAY)
-
-    await edit_interaction_message(
-        interaction,
-        embed=combat_embed(player, session, note),
-        view=final_view,
-    )
+    # Only killing blows animate: center -> left -> right -> left -> center.
+    session.hit_animating = True
+    try:
+        frames = (0, -1, 1, -1, 0)
+        for index, offset in enumerate(frames):
+            await edit_interaction_message(
+                interaction,
+                embed=combat_embed(
+                    player,
+                    session,
+                    note,
+                    enemy_art=shift_ascii_art(enemy.art, offset),
+                ),
+                view=None,
+            )
+            if index < len(frames) - 1:
+                await asyncio.sleep(DEFEAT_SHAKE_FRAME_DELAY)
+    finally:
+        session.hit_animating = False
 
 
 def shop_embed(player, session, note=""):
@@ -1499,6 +1540,85 @@ def cancel_cue(session: GameSession):
         task.cancel()
 
 
+def cancel_bleed(session: GameSession, *, clear=True):
+    session.bleed_token += 1
+    task = session.bleed_task
+    session.bleed_task = None
+    if task and not task.done() and task is not asyncio.current_task():
+        task.cancel()
+
+    if clear:
+        enemy = session.room().enemy
+        if enemy is not None:
+            clear_bleed(enemy)
+
+
+def schedule_bleed(interaction: discord.Interaction, session: GameSession):
+    enemy = session.room().enemy
+    if enemy is None or enemy.hp <= 0 or enemy.bleed_stacks <= 0:
+        return
+
+    if session.bleed_task and not session.bleed_task.done():
+        return
+
+    token = session.bleed_token
+    room_pos = session.current
+    session.bleed_task = asyncio.create_task(
+        bleed_sequence(interaction, session, enemy, room_pos, token)
+    )
+
+
+async def bleed_sequence(interaction, session, enemy, room_pos, token):
+    next_tick = time.monotonic() + BLEED_TICK_SECONDS
+
+    try:
+        while True:
+            await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
+
+            if (
+                session.bleed_token != token
+                or session.ended
+                or session.current != room_pos
+                or session.room().enemy is not enemy
+                or session.room().cleared
+            ):
+                return
+
+            now = time.monotonic()
+            if enemy.bleed_stacks <= 0 or enemy.hp <= 0:
+                return
+            if now > enemy.bleed_expires_at + 0.05:
+                clear_bleed(enemy)
+                return
+
+            damage = enemy.bleed_stacks
+            enemy.hp -= damage
+            next_tick += BLEED_TICK_SECONDS
+
+            if enemy.hp <= 0:
+                enemy.hp = 0
+                while session.hit_animating and not session.ended:
+                    await asyncio.sleep(0.05)
+                if session.ended or session.current != room_pos or session.room().cleared:
+                    return
+                await enemy_defeated(
+                    interaction,
+                    session,
+                    f"🩸 **BLEED!** 적에게 **{damage} 피해!**",
+                )
+                return
+
+            if time.monotonic() >= enemy.bleed_expires_at - 0.05:
+                clear_bleed(enemy)
+                return
+
+    except asyncio.CancelledError:
+        return
+    finally:
+        if session.bleed_task is asyncio.current_task():
+            session.bleed_task = None
+
+
 def schedule_cue(interaction: discord.Interaction, session: GameSession, kind: str):
     cancel_cue(session)
     session.phase = kind
@@ -1593,30 +1713,11 @@ async def timeout_timing(interaction, session, kind, token):
         await player_died_background(interaction, session, note)
         return
 
-    bleed_damage = tick_bleed(enemy)
-    if bleed_damage:
-        note += f"\n🩸 출혈! 적에게 **{bleed_damage} 피해**."
-
-    if enemy.hp <= 0:
-        if bleed_damage:
-            await animate_enemy_hit(interaction, p, session, note, final_view=None)
-        await enemy_defeated(interaction, session, note)
-        return
-
     session.phase = "attack"
-    if bleed_damage:
-        await animate_enemy_hit(
-            interaction,
-            p,
-            session,
-            note,
-            final_view=CombatView(session, "attack"),
-        )
-    else:
-        await interaction.edit_original_response(
-            embed=combat_embed(p, session, note),
-            view=CombatView(session, "attack"),
-        )
+    await interaction.edit_original_response(
+        embed=combat_embed(p, session, note),
+        view=CombatView(session, "attack"),
+    )
     schedule_cue(interaction, session, "attack")
 
 
@@ -1860,33 +1961,24 @@ async def press_timing(interaction, session, kind):
             )
             if enemy.hp > 0:
                 stacks = apply_bleed(enemy)
-                note += f"\n🩸 출혈 **{stacks}**"
+                schedule_bleed(interaction, session)
+                note += f"\n🩸 출혈 **{stacks}** · {BLEED_DURATION_SECONDS:.0f}초"
         elif grade == "GOOD":
             note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
         else:
             note = f"**MISS!** · `{elapsed:.2f}초` — 공격이 빗나갔다."
 
         if enemy.hp <= 0:
-            if damage > 0:
-                await animate_enemy_hit(interaction, p, session, note, final_view=None)
             await enemy_defeated(interaction, session, note)
             return
 
         session.phase = "defend"
         final_note = note + "\n\n적이 반격한다."
-        if damage > 0:
-            await animate_enemy_hit(
-                interaction,
-                p,
-                session,
-                final_note,
-                final_view=CombatView(session, "defend"),
-            )
-        else:
-            await interaction.response.edit_message(
-                embed=combat_embed(p, session, final_note),
-                view=CombatView(session, "defend"),
-            )
+        await edit_interaction_message(
+            interaction,
+            embed=combat_embed(p, session, final_note),
+            view=CombatView(session, "defend"),
+        )
         schedule_cue(interaction, session, "defend")
         return
 
@@ -1912,35 +2004,16 @@ async def press_timing(interaction, session, kind):
         await player_died(interaction, session, note)
         return
 
-    if enemy.hp > 0:
-        bleed_damage = tick_bleed(enemy)
-    else:
-        bleed_damage = 0
-
-    if bleed_damage:
-        note += f"\n🩸 출혈! 적에게 **{bleed_damage} 피해**."
-
-    enemy_damage = counter + bleed_damage
     if enemy.hp <= 0:
-        if enemy_damage > 0:
-            await animate_enemy_hit(interaction, p, session, note, final_view=None)
         await enemy_defeated(interaction, session, note)
         return
 
     session.phase = "attack"
-    if enemy_damage > 0:
-        await animate_enemy_hit(
-            interaction,
-            p,
-            session,
-            note,
-            final_view=CombatView(session, "attack"),
-        )
-    else:
-        await interaction.response.edit_message(
-            embed=combat_embed(p, session, note),
-            view=CombatView(session, "attack"),
-        )
+    await edit_interaction_message(
+        interaction,
+        embed=combat_embed(p, session, note),
+        view=CombatView(session, "attack"),
+    )
     schedule_cue(interaction, session, "attack")
 
 
@@ -1973,18 +2046,15 @@ async def combat_bomb(interaction, session):
     note = f"💣 **KABOOM!!** 적에게 **{damage} 피해!**"
 
     if enemy.hp <= 0:
-        await animate_enemy_hit(interaction, p, session, note, final_view=None)
         await enemy_defeated(interaction, session, note)
         return
 
     session.phase = "defend"
     final_note = note + "\n\n적이 반격한다."
-    await animate_enemy_hit(
+    await edit_interaction_message(
         interaction,
-        p,
-        session,
-        final_note,
-        final_view=CombatView(session, "defend"),
+        embed=combat_embed(p, session, final_note),
+        view=CombatView(session, "defend"),
     )
     schedule_cue(interaction, session, "defend")
 
@@ -2002,6 +2072,7 @@ async def try_run(interaction, session):
     p = session_player(session)
 
     if random.random() < RUN_SUCCESS_RATE:
+        cancel_bleed(session, clear=True)
         enemy.hp = enemy.max_hp
         if session.previous is not None:
             session.current = session.previous
@@ -2034,15 +2105,20 @@ async def try_run(interaction, session):
 
 
 async def enemy_defeated(interaction, session, combat_note):
-    cancel_cue(session)
     room = session.room()
     enemy = room.enemy
     assert enemy is not None
+    if room.cleared:
+        return
 
+    # Claim the defeat before the first await so simultaneous damage cannot reward twice.
     room.cleared = True
+    cancel_cue(session)
+    cancel_bleed(session, clear=True)
     session.phase = "explore"
 
     p = session_player(session)
+    await animate_enemy_defeat(interaction, p, session, combat_note)
 
     low, high = SHAPES[enemy.shape]["coin_drop"]
     reward_bonus = max(0, (session.floor_number - 1) // 2)
@@ -2123,6 +2199,7 @@ def death_description(player: PlayerState, note: str) -> str:
 
 async def player_died(interaction, session, note):
     cancel_cue(session)
+    cancel_bleed(session, clear=True)
     p = session_player(session)
     p.hp = 0
     session.ended = True
@@ -2147,6 +2224,7 @@ async def player_died(interaction, session, note):
 
 async def player_died_background(interaction, session, note):
     cancel_cue(session)
+    cancel_bleed(session, clear=True)
     p = session_player(session)
     p.hp = 0
     session.ended = True
