@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "플레이어 현황")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -40,7 +39,6 @@ EMBED_COLORS = {
 DIR_EMOJI = {"위": "⬆️", "오른쪽": "➡️", "아래": "⬇️", "왼쪽": "⬅️"}
 RUN_SUCCESS_RATE = 0.65
 MAX_DAILY_LIVES = 5
-BUILD_TAG = "2026-08-17-floor0-lives-admin-sync"
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 
@@ -459,7 +457,7 @@ def session_player(session: GameSession) -> PlayerState:
     if session.is_tutorial:
         assert session.temp_player is not None
         return session.temp_player
-    return session_player(session)
+    return db.get_player(session.guild_id, session.user_id)
 
 
 def save_session_player(session: GameSession, player: PlayerState):
@@ -687,8 +685,8 @@ def generate_tutorial(guild_id: int, user_id: int, *, replay: bool) -> GameSessi
     secret_pos = (3, 1)
     secret = Room(secret_pos, "shop")
     secret.shop_stock = [
-        Gear("weapon", "연습용 검", 8, {"시안": 1, "마젠타": 1, "옐로": 0}),
-        Gear("armor", "연습용 방패", 3, {"시안": 0, "마젠타": 1, "옐로": 1}),
+        generate_gear("weapon", floor_number=1),
+        generate_gear("armor", floor_number=1),
     ]
     secret.bomb_stock = 2
     rooms[secret_pos] = secret
@@ -711,12 +709,7 @@ def generate_tutorial(guild_id: int, user_id: int, *, replay: bool) -> GameSessi
 
 
 def tutorial_start_note(replay: bool) -> str:
-    mode = "연습 모드" if replay else "첫 탐색 전 연습"
-    return (
-        f"**0층 · 튜토리얼 ({mode})**\n"
-        "방향 버튼으로 이동하면서 전투와 탐색을 익혀 보자.\n\n"
-        "⚠️ **0층의 HP·코인·폭탄·장비 변화는 실제 게임에 반영되지 않는다.**"
-    )
+    return ""
 
 
 def hp_bar(current: int, maximum: int, width=8, enemy=False):
@@ -873,10 +866,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
         title = f"0층 · 튜토리얼 · {title}"
 
     if session.is_tutorial:
-        resource_line = (
-            f"코인 `{player.coins}` · 폭탄 `{player.bombs}`\n"
-            "목숨 `소모되지 않음`"
-        )
+        resource_line = f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
     else:
         resource_line = (
             f"코인 `{player.coins}` · 폭탄 `{player.bombs}`\n"
@@ -936,7 +926,7 @@ def exploration_embed(player, session, note=""):
     if (
         session.boss_defeated
         and session.current == session.boss_pos
-        and not (session.is_tutorial and session.tutorial_replay)
+        and not session.is_tutorial
     ):
         around.append(f"🪜 **{session.floor_number + 1}층**")
 
@@ -947,13 +937,13 @@ def exploration_embed(player, session, note=""):
     )
 
     if session.boss_defeated:
-        if session.is_tutorial and session.tutorial_replay:
-            embed.set_footer(text="튜토리얼 연습 완료 · /게임으로 실제 탐색에 돌아갈 수 있다.")
+        if session.is_tutorial:
+            if not session.tutorial_replay and session.current == session.boss_pos:
+                embed.set_footer(text="⚠️ 튜토리얼의 아이템은 사라져요!")
         elif session.current == session.boss_pos:
-            footer = f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
-            if session.is_tutorial:
-                footer = "1층으로 가면 튜토리얼의 아이템은 사라진다."
-            embed.set_footer(text=footer)
+            embed.set_footer(
+                text=f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
+            )
         else:
             embed.set_footer(
                 text=f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
@@ -1004,7 +994,7 @@ def combat_embed(player, session, note=""):
             f"`{player.hp}/{player.max_hp}`\n"
             f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
             + (
-                "\n목숨 `소모되지 않음`"
+                ""
                 if session.is_tutorial
                 else f"\n남은 목숨 `{remaining_lives(player)}/{MAX_DAILY_LIVES}`"
             )
@@ -1533,13 +1523,6 @@ async def move_player(interaction, session, direction, target):
     if room.kind in ("normal", "boss") and not room.cleared:
         session.phase = "battle_ready"
         encounter_note = f"**{room.enemy.color} {room.enemy.shape}**이(가) 나타났다!"
-        if session.is_tutorial and room.kind == "normal":
-            encounter_note += (
-                "\n\n이 적은 **연습용**이라 공격을 받아도 피해를 주지 않는다."
-                "\n전투 시작 후 신호를 보고 공격·방어 버튼을 눌러 보자."
-            )
-        elif session.is_tutorial and room.kind == "boss":
-            encounter_note += "\n\n튜토리얼의 마지막 전투다!"
         await interaction.response.edit_message(
             embed=combat_embed(
                 p,
@@ -1551,11 +1534,8 @@ async def move_player(interaction, session, direction, target):
         return
 
     if room.kind == "shop":
-        shop_note = ""
-        if session.is_tutorial:
-            shop_note = "여기서 산 장비와 사용한 코인은 실제 게임에 반영되지 않는다."
         await interaction.response.edit_message(
-            embed=shop_embed(p, session, shop_note),
+            embed=shop_embed(p, session),
             view=ShopView(session),
         )
         return
@@ -1578,14 +1558,7 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                (
-                    f"🪙 코인 **{amount}개**를 주웠다."
-                    + (
-                        "\n튜토리얼에서 얻은 코인은 1층으로 가져가지 않는다."
-                        if session.is_tutorial
-                        else ""
-                    )
-                ),
+                f"🪙 코인 **{amount}개**를 주웠다.",
             ),
             view=ExploreView(session),
         )
@@ -1945,20 +1918,7 @@ async def show_after_clear(interaction, session, note):
     p = session_player(session)
 
     if session.boss_defeated and session.current == session.boss_pos:
-        if session.is_tutorial:
-            if session.tutorial_replay:
-                note += (
-                    "\n\n**튜토리얼 클리어!**"
-                    "\n이 연습의 아이템과 진행은 실제 게임에 반영되지 않는다."
-                    "\n`/게임`으로 실제 탐색으로 돌아갈 수 있다."
-                )
-            else:
-                note += (
-                    "\n\n**튜토리얼 클리어!**"
-                    "\n⚠️ **1층으로 가면 튜토리얼의 아이템은 사라져요!**"
-                    "\n🪜 **1층**으로 갈 수 있다."
-                )
-        else:
+        if not session.is_tutorial:
             note += (
                 "\n\n**보스를 처치했다!** "
                 f"🪜 **{session.floor_number + 1}층**으로 갈 수 있다."
@@ -1995,14 +1955,8 @@ async def player_died(interaction, session, note):
     session.ended = True
 
     if session.is_tutorial:
-        embed = player_embed(p, session, "연습 종료")
-        retry_command = "/튜토리얼" if session.tutorial_replay else "/게임"
-        embed.description = (
-            note
-            + "\n\n**눈앞이 캄캄해졌다!**"
-            + "\n튜토리얼에서는 목숨을 잃지 않는다."
-            + f"\n`{retry_command}`으로 0층을 다시 시작할 수 있다."
-        )
+        embed = player_embed(p, session, "게임 오버")
+        embed.description = note + "\n\n**눈앞이 캄캄해졌다!**"
         await interaction.response.edit_message(embed=embed, view=None)
         return
 
@@ -2025,14 +1979,8 @@ async def player_died_background(interaction, session, note):
     session.ended = True
 
     if session.is_tutorial:
-        embed = player_embed(p, session, "연습 종료")
-        retry_command = "/튜토리얼" if session.tutorial_replay else "/게임"
-        embed.description = (
-            note
-            + "\n\n**눈앞이 캄캄해졌다!**"
-            + "\n튜토리얼에서는 목숨을 잃지 않는다."
-            + f"\n`{retry_command}`으로 0층을 다시 시작할 수 있다."
-        )
+        embed = player_embed(p, session, "게임 오버")
+        embed.description = note + "\n\n**눈앞이 캄캄해졌다!**"
         await interaction.edit_original_response(embed=embed, view=None)
         return
 
@@ -2059,15 +2007,7 @@ async def climb_next_floor(interaction, session):
 
     if session.is_tutorial:
         if session.tutorial_replay:
-            p = session_player(session)
-            await interaction.response.edit_message(
-                embed=exploration_embed(
-                    p,
-                    session,
-                    "튜토리얼 다시보기에서는 1층으로 진행하지 않는다.",
-                ),
-                view=ExploreView(session),
-            )
+            await interaction.response.defer()
             return
 
         cancel_cue(session)
@@ -2102,7 +2042,7 @@ async def climb_next_floor(interaction, session):
             embed=exploration_embed(
                 p,
                 new_session,
-                "**1층 시작!**\n튜토리얼에서 얻은 아이템은 모두 사라졌다.",
+                "**1층 시작!**",
             ),
             view=ExploreView(new_session),
         )
@@ -2435,56 +2375,10 @@ intents = discord.Intents.default()
 
 class ShapeGameBot(commands.Bot):
     async def setup_hook(self):
-        print(f"LINK BUILD {BUILD_TAG}")
-        code_commands = ", ".join(sorted(cmd.name for cmd in self.tree.get_commands()))
-        print(f"코드에 등록된 명령어: {code_commands}")
-
-        if TEST_GUILD_ID:
-            guild = discord.Object(id=int(TEST_GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            names = ", ".join(sorted(cmd.name for cmd in synced))
-            print(f"테스트 서버 {TEST_GUILD_ID}에 명령어 동기화 완료: {names}")
-        else:
-            synced = await self.tree.sync()
-            names = ", ".join(sorted(cmd.name for cmd in synced))
-            print(f"전역 명령어 동기화 완료: {names}")
+        await self.tree.sync()
 
 
 bot = ShapeGameBot(command_prefix="!", intents=intents)
-_guild_cleanup_done = False
-
-
-@bot.event
-async def on_ready():
-    global _guild_cleanup_done
-    print(f"로그인 완료: {bot.user} ({bot.user.id})")
-
-    try:
-        remote_global = await bot.tree.fetch_commands()
-        names = ", ".join(sorted(cmd.name for cmd in remote_global))
-        print(f"Discord 전역 명령어 확인: {names}")
-    except discord.HTTPException as exc:
-        print(f"전역 명령어 확인 실패: {exc}")
-
-    # 과거 TEST_GUILD_ID 사용 등으로 남아 있는 서버 전용 명령은
-    # 전역 명령과 동시에 표시되어 중복처럼 보일 수 있다.
-    if not TEST_GUILD_ID and not _guild_cleanup_done:
-        for guild in bot.guilds:
-            try:
-                remote_guild = await bot.tree.fetch_commands(guild=guild)
-                if not remote_guild:
-                    continue
-                old_names = ", ".join(sorted(cmd.name for cmd in remote_guild))
-                bot.tree.clear_commands(guild=guild)
-                await bot.tree.sync(guild=guild)
-                print(
-                    f"서버 {guild.id}의 오래된 서버 전용 명령어 정리 완료: "
-                    f"{old_names}"
-                )
-            except discord.HTTPException as exc:
-                print(f"서버 {guild.id} 명령어 정리 실패: {exc}")
-        _guild_cleanup_done = True
 
 
 @bot.tree.command(name="게임", description="오늘의 탐색을 시작하거나 이어서 플레이합니다.")
@@ -2519,7 +2413,7 @@ async def game(interaction: discord.Interaction):
                     embed=combat_embed(
                         tp,
                         old_tutorial,
-                        "진행 중인 튜토리얼 전투로 돌아왔다.",
+                        "",
                     ),
                     view=BattleStartView(old_tutorial),
                     ephemeral=True,
@@ -2529,7 +2423,7 @@ async def game(interaction: discord.Interaction):
                     embed=shop_embed(
                         tp,
                         old_tutorial,
-                        "진행 중인 튜토리얼 상점으로 돌아왔다.",
+                        "",
                     ),
                     view=ShopView(old_tutorial),
                     ephemeral=True,
@@ -2539,7 +2433,7 @@ async def game(interaction: discord.Interaction):
                     embed=exploration_embed(
                         tp,
                         old_tutorial,
-                        "진행 중인 0층 튜토리얼로 돌아왔다.",
+                        "",
                     ),
                     view=ExploreView(old_tutorial),
                     ephemeral=True,
@@ -2680,7 +2574,7 @@ async def game(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="튜토리얼", description="0층 튜토리얼을 다시 플레이합니다.")
+@bot.tree.command(name="튜토리얼", description="튜토리얼")
 async def tutorial(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
@@ -2706,8 +2600,7 @@ async def tutorial(interaction: discord.Interaction):
         embed=exploration_embed(
             session_player(session),
             session,
-            tutorial_start_note(True)
-            + "\n\n다시보기에서는 튜토리얼을 끝내도 **1층으로 진행하지 않는다.**",
+            tutorial_start_note(True),
         ),
         view=ExploreView(session),
         ephemeral=True,
@@ -2972,15 +2865,9 @@ async def test_reset(interaction: discord.Interaction):
         old_tutorial.ended = True
 
     db.test_reset(interaction.guild_id, interaction.user.id)
-    p = db.get_player(interaction.guild_id, interaction.user.id)
-    start_text = (
-        "0층 튜토리얼부터"
-        if not p.tutorial_completed
-        else "1층부터"
-    )
 
     await interaction.response.send_message(
-        f"테스트 상태를 초기화했습니다. `/게임`으로 {start_text} 다시 시작할 수 있습니다.\n"
+        "테스트 상태를 초기화했습니다. `/게임`으로 다시 시작할 수 있습니다.\n"
         "**무기·방패·코인·폭탄은 유지됩니다.**",
         ephemeral=True,
     )
