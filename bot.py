@@ -320,6 +320,7 @@ class GameSession:
     bleed_task: Optional[asyncio.Task] = field(default=None, repr=False)
     hit_animating: bool = False
     enemy_anim_frame: int = 0
+    run_failed: bool = False
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -1466,7 +1467,7 @@ class BattleStartView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
         btn = discord.ui.Button(
-            label="전투 시작",
+            label="전투개시",
             emoji="⚔️",
             style=discord.ButtonStyle.danger,
         )
@@ -1476,6 +1477,20 @@ class BattleStartView(OwnerView):
 
         btn.callback = callback
         self.add_item(btn)
+
+        enemy = session.room().enemy
+        if enemy and not enemy.boss:
+            run = discord.ui.Button(
+                label="도주",
+                style=discord.ButtonStyle.secondary,
+                disabled=session.run_failed,
+            )
+
+            async def run_callback(interaction):
+                await try_run(interaction, self.session)
+
+            run.callback = run_callback
+            self.add_item(run)
 
 
 class CombatView(OwnerView):
@@ -1522,17 +1537,6 @@ class CombatView(OwnerView):
             shield.callback = shield_callback
             self.add_item(shield)
 
-        if enemy and not enemy.boss:
-            run = discord.ui.Button(
-                label="도주",
-                style=discord.ButtonStyle.secondary,
-            )
-
-            async def run_callback(interaction):
-                await try_run(interaction, self.session)
-
-            run.callback = run_callback
-            self.add_item(run)
 
 
 class LootView(OwnerView):
@@ -1886,6 +1890,7 @@ async def move_player(interaction, session, direction, target):
     cancel_cue(session)
     session.previous = session.current
     session.current = target
+    session.run_failed = False
     room = session.room()
     room.visited = True
     p = session_player(session)
@@ -2251,16 +2256,16 @@ async def try_run(interaction, session):
     if enemy is None or enemy.boss:
         await interaction.response.defer()
         return
-    if session.phase not in ("attack", "defend"):
+    if session.phase != "battle_ready" or session.run_failed:
         await interaction.response.defer()
         return
 
-    cancel_cue(session)
     p = session_player(session)
 
     if random.random() < RUN_SUCCESS_RATE:
         cancel_bleed(session, clear=True)
         enemy.hp = enemy.max_hp
+        session.run_failed = False
         if session.previous is not None:
             session.current = session.previous
         session.phase = "explore"
@@ -2268,27 +2273,17 @@ async def try_run(interaction, session):
             embed=exploration_embed(
                 p,
                 session,
-                "**도주 성공!**",
+                "**무사히 도망쳤다!**",
             ),
             view=ExploreView(session),
         )
         return
 
-    damage = incoming_damage(p, enemy, "MISS")
-    p.hp = max(0, p.hp - damage)
-    save_session_player(session, p)
-    note = f"**도주 실패!** **{damage} 피해**"
-
-    if p.hp <= 0:
-        await player_died(interaction, session, note)
-        return
-
-    session.phase = "attack"
+    session.run_failed = True
     await interaction.response.edit_message(
-        embed=combat_embed(p, session, note),
-        view=CombatView(session, "attack"),
+        embed=combat_embed(p, session, "**도망칠 수 없었다!**"),
+        view=BattleStartView(session),
     )
-    schedule_cue(interaction, session, "attack")
 
 
 async def enemy_defeated(interaction, session, combat_note):
