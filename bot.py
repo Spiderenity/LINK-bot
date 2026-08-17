@@ -1037,12 +1037,15 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
     if session.is_tutorial and not title.startswith("0층"):
         title = f"0층 · 튜토리얼 · {title}"
 
-    resource_line = f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
+    resource_line = (
+        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        if session.is_tutorial
+        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
+    )
 
     embed = discord.Embed(title=title, colour=colour)
-    hp_name = "내 HP" if session.is_tutorial else f"내 HP {life_hearts(player)}"
     embed.add_field(
-        name=hp_name,
+        name="내 HP",
         value=(
             f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
             f"{combat_stat_lines(player)}\n"
@@ -1059,18 +1062,6 @@ def exploration_embed(player, session, note=""):
         f"0층 · 튜토리얼 · {room_name(room)}"
         if session.is_tutorial
         else f"{session.floor_number}층 · {room_name(room)}"
-    )
-    embed = player_embed(player, session, title)
-    if note:
-        embed.description = note
-
-    embed.add_field(
-        name="맵",
-        value=(
-            f"```text\n{map_ascii(session)}\n```\n"
-            "`@` 현재 · `·` 클리어 · `?` 미탐색 · `B` 보스 · `S` 비밀방"
-        ),
-        inline=False,
     )
 
     around = []
@@ -1096,10 +1087,29 @@ def exploration_embed(player, session, note=""):
     ):
         around.append(f"🪜 **{session.floor_number + 1}층**")
 
-    embed.add_field(
-        name="주변",
-        value="\n".join(around) if around else "막다른 방이다.",
-        inline=False,
+    resources = (
+        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        if session.is_tutorial
+        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
+    )
+
+    parts = []
+    if note:
+        parts.append(note)
+    parts.append(
+        f"**내 HP**\n"
+        f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+        f"{resources}"
+    )
+    parts.append(
+        f"```text\n{map_ascii(session)}\n```\n"
+        "`@` 현재 · `?` 미탐색 · `B` 보스 · `S` 비밀방"
+    )
+    parts.append("\n".join(around) if around else "막다른 방이다.")
+
+    embed = discord.Embed(
+        title=title,
+        description="\n\n".join(parts),
     )
 
     if session.boss_defeated:
@@ -1138,11 +1148,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         colour=EMBED_COLORS[enemy.color],
     )
 
-    embed.add_field(
-        name="\u200b",
-        value=colored_enemy_art(enemy, enemy_art),
-        inline=False,
-    )
+    embed.description = colored_enemy_art(enemy, enemy_art)
     bleed_left = bleed_seconds_left(enemy)
     bleed_line = (
         f"\n🩸 출혈 `{enemy.bleed_stacks}` · `{bleed_left:.1f}초`"
@@ -1162,14 +1168,18 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         inline=False,
     )
 
-    hp_name = "내 HP" if session.is_tutorial else f"내 HP {life_hearts(player)}"
+    resources = (
+        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        if session.is_tutorial
+        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
+    )
     embed.add_field(
-        name=hp_name,
+        name="내 HP",
         value=(
             f"{hp_bar(player.hp, player.max_hp)} "
             f"`{player.hp}/{player.max_hp}`\n"
             f"{combat_stat_lines(player)}\n"
-            f"코인 `{player.coins}` · 폭탄 `{player.bombs}`"
+            f"{resources}"
         ),
         inline=False,
     )
