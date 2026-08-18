@@ -3941,7 +3941,7 @@ async def status(interaction: discord.Interaction):
     embed.add_field(
         name="진행",
         value=(
-            f"현재 `{p.floor_number}층` · 최고 `{p.highest_floor}층`\n"
+            f"🪜 {small_number(p.floor_number)} · 👑 {small_number(p.highest_floor)}\n"
             f"`{p.last_day or '미시작'}` · `{p.status}`"
         ),
         inline=False,
