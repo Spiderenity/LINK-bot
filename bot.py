@@ -807,6 +807,7 @@ class Database:
 db = Database(DB_PATH)
 sessions: Dict[Tuple[int, int], GameSession] = {}
 tutorial_sessions: Dict[Tuple[int, int], GameSession] = {}
+debug_messages = {}
 
 
 def gear_state(gear: Optional[Gear]):
@@ -2511,6 +2512,9 @@ class MagicShopView(OwnerView):
         )
 
         async def leave_callback(interaction):
+            if getattr(session, "debug_mode", False):
+                await debug_return_to_panel(interaction, session)
+                return
             p2 = session_player(session)
             await interaction.response.edit_message(
                 embed=exploration_embed(p2, session),
@@ -2561,6 +2565,9 @@ class ShopView(OwnerView):
         )
 
         async def leave_callback(interaction):
+            if getattr(session, "debug_mode", False):
+                await debug_return_to_panel(interaction, session)
+                return
             p2 = session_player(session)
             await interaction.response.edit_message(
                 embed=exploration_embed(p2, session, "상점을 나왔다."),
@@ -2609,6 +2616,9 @@ class SlotView(OwnerView):
         )
 
         async def leave_callback(interaction):
+            if getattr(session, "debug_mode", False):
+                await debug_return_to_panel(interaction, session)
+                return
             p2 = session_player(session)
             await interaction.response.edit_message(
                 embed=exploration_embed(p2, session, "슬롯머신 방을 나왔다."),
@@ -3590,6 +3600,9 @@ async def open_magic_shop(interaction, session):
 async def buy_magic_gear(interaction, session, index, price):
     p = session_player(session)
     if session.magic_shop_used or index >= len(session.magic_shop_stock):
+        if getattr(session, "debug_mode", False):
+            await debug_return_to_panel(interaction, session, "상점은 이미 닫혔다.")
+            return
         await interaction.response.edit_message(
             embed=exploration_embed(p, session, "상점은 이미 닫혔다."),
             view=ExploreView(session),
@@ -3612,6 +3625,9 @@ async def buy_magic_gear(interaction, session, index, price):
 async def confirm_magic_gear(interaction, session, index, price):
     p = session_player(session)
     if session.magic_shop_used or index >= len(session.magic_shop_stock):
+        if getattr(session, "debug_mode", False):
+            await debug_return_to_panel(interaction, session, "상점은 이미 닫혔다.")
+            return
         await interaction.response.edit_message(
             embed=exploration_embed(p, session, "상점은 이미 닫혔다."),
             view=ExploreView(session),
@@ -3630,6 +3646,13 @@ async def confirm_magic_gear(interaction, session, index, price):
     save_session_player(session, p)
     session.magic_shop_used = True
     session.magic_shop_stock.clear()
+    if getattr(session, "debug_mode", False):
+        await debug_return_to_panel(
+            interaction,
+            session,
+            f"**{gear.display_name()}** 구입 및 장착 완료.",
+        )
+        return
     await interaction.response.edit_message(
         embed=exploration_embed(
             p,
@@ -3989,6 +4012,13 @@ def debug_panel_embed(guild_id: int, user_id: int, note: str = "") -> discord.Em
     return embed
 
 
+async def debug_return_to_panel(interaction: discord.Interaction, session: GameSession, note: str = ""):
+    await interaction.response.edit_message(
+        embed=debug_panel_embed(session.guild_id, session.user_id, note),
+        view=DebugView(session.user_id),
+    )
+
+
 def debug_stop_sessions(guild_id: int, user_id: int):
     key = (guild_id, user_id)
     old = sessions.pop(key, None)
@@ -4013,6 +4043,7 @@ def debug_new_floor(guild_id: int, user_id: int, floor_number: int) -> GameSessi
     p.hp = min(max(1, p.hp), player_max_hp(p))
     db.save_player(p)
     session = generate_floor(guild_id, user_id, p.last_day, floor_number)
+    session.debug_mode = True
     sessions[(guild_id, user_id)] = session
     persist_session(session)
     return session
@@ -4161,6 +4192,32 @@ class DebugView(discord.ui.View):
             button.callback = callback
             self.add_item(button)
         self.add_item(DebugGearSelect())
+        close = discord.ui.Button(
+            label="닫기",
+            style=discord.ButtonStyle.secondary,
+            row=4,
+        )
+
+        async def close_callback(interaction):
+            message = debug_messages.pop(self.user_id, None)
+            await interaction.response.defer()
+            if message is not None:
+                try:
+                    await message.delete()
+                    return
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+            try:
+                await interaction.delete_original_response()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                if interaction.message is not None:
+                    try:
+                        await interaction.message.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+
+        close.callback = close_callback
+        self.add_item(close)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id or not debug_allowed(interaction):
@@ -4255,9 +4312,16 @@ async def debug_command(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     try:
+        old_message = debug_messages.pop(interaction.user.id, None)
+        if old_message is not None:
+            try:
+                await old_message.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
         embed = debug_panel_embed(interaction.guild_id, interaction.user.id)
         view = DebugView(interaction.user.id)
-        await interaction.edit_original_response(embed=embed, view=view)
+        message = await interaction.edit_original_response(embed=embed, view=view)
+        debug_messages[interaction.user.id] = message
     except Exception as exc:
         await interaction.edit_original_response(
             content=f"디버그 패널 오류: `{type(exc).__name__}: {exc}`",
