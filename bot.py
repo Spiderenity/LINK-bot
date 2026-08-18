@@ -1128,8 +1128,8 @@ def gear_change_summary(player: PlayerState, gear: Gear) -> str:
     current_hp_bonus = current.hp_bonus if current else 0
     after_hp = max(1, before_hp - current_hp_bonus + gear.hp_bonus)
     return (
-        f"🛡️ {stat_with_delta(before_power, after_power)} · {affinity_text}\n"
-        f"❤️ {stat_with_delta(before_hp, after_hp)}"
+        f"🛡️ {stat_with_delta(before_power, after_power)} · "
+        f"❤️ {stat_with_delta(before_hp, after_hp)} · {affinity_text}"
     )
 
 
@@ -2069,9 +2069,7 @@ async def animate_enemy_defeat(interaction, player, session, note):
 def shop_embed(player, session, note="", footer_status=""):
     persist_session(session)
     room = session.room()
-    embed = player_embed(player, session, room_title(session, "비밀 상점"))
-    if note:
-        embed.description = note
+    embed = discord.Embed(title=room_title(session, "비밀 상점"), description=note or None)
 
     lines = []
     for i, gear in enumerate(room.shop_stock[:2], 1):
@@ -2095,17 +2093,16 @@ def shop_embed(player, session, note="", footer_status=""):
 
 def gear_purchase_embed(player: PlayerState, session: GameSession, gear: Gear, price: int, magic_shop: bool) -> discord.Embed:
     title = room_title(session, "마법 상점" if magic_shop else "비밀 상점")
-    embed = player_embed(player, session, title)
+    embed = discord.Embed(title=title)
     current = equipped_gear(player, gear.kind)
-    slot_name = gear_slot_name(gear.kind)
     embed.add_field(
-        name=f"새 {slot_name} · 🪙 {small_number(price)}",
-        value=gear.label(),
+        name="현재 장비",
+        value=current.label() if current else "없음",
         inline=False,
     )
     embed.add_field(
-        name=f"현재 {slot_name}",
-        value=current.label() if current else "없음",
+        name=f"새 장비 · 🪙 {small_number(price)}",
+        value=gear.label(),
         inline=False,
     )
     embed.add_field(
@@ -2387,21 +2384,16 @@ class CombatView(OwnerView):
 def loot_embed(player: PlayerState, session: GameSession, gear: Gear) -> discord.Embed:
     enemy = session.room().enemy
     colour = EMBED_COLORS[enemy.color] if enemy is not None else None
-    embed = player_embed(
-        player,
-        session,
-        "전리품 발견",
+    embed = discord.Embed(
+        title=room_title(session, "전리품 발견"),
         colour=colour,
-        show_resources=False,
+        description=session.pending_loot_note or None,
     )
-    if session.pending_loot_note:
-        embed.description = session.pending_loot_note
     if session.pending_loot_footer:
         embed.set_footer(text=session.pending_loot_footer)
     current = equipped_gear(player, gear.kind)
-    item_name = gear_slot_name(gear.kind)
-    embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
-    embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "없음", inline=False)
+    embed.add_field(name="현재 장비", value=current.label() if current else "없음", inline=False)
+    embed.add_field(name="새 장비", value=gear.label(), inline=False)
     embed.add_field(name="착용 시", value=gear_change_summary(player, gear), inline=False)
     return embed
 
@@ -3566,9 +3558,7 @@ async def climb_next_floor(interaction, session):
 
 def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> discord.Embed:
     persist_session(session)
-    embed = player_embed(player, session, room_title(session, "마법 상점"))
-    if note:
-        embed.description = note
+    embed = discord.Embed(title=room_title(session, "마법 상점"), description=note or None)
     lines = []
     for index, gear in enumerate(session.magic_shop_stock[:3], 1):
         price = magic_price(gear, session.floor_number)
@@ -3952,20 +3942,49 @@ def debug_allowed(interaction: discord.Interaction) -> bool:
     return DEBUG_USER_ID is not None and interaction.user.id == DEBUG_USER_ID
 
 
+def status_gear_block(slot_name: str, gear: Gear) -> str:
+    _, stats = gear.label().split(" | ", 1)
+    return f"`{slot_name}` | `{gear.display_name()}`\n{stats}"
+
+
+def add_status_fields(embed: discord.Embed, p: PlayerState):
+    lives = MAX_DAILY_LIVES if p.last_day != today_key() else remaining_lives(p)
+    status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
+    equipment_lines = [
+        status_gear_block("무기", p.weapon),
+        status_gear_block("방패", p.shield),
+    ]
+    if p.ring is not None:
+        equipment_lines.insert(1, status_gear_block("반지", p.ring))
+    if p.head is not None:
+        equipment_lines.append(status_gear_block("투구", p.head))
+    embed.add_field(
+        name="내 HP",
+        value=(
+            f"{hp_bar(p.hp, player_max_hp(p))} `{p.hp}/{player_max_hp(p)}`\n"
+            f"{combat_stat_lines(p)}\n"
+            f"{status_hearts} · 🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="장비",
+        value="\n".join(equipment_lines),
+        inline=False,
+    )
+    embed.add_field(
+        name="진행",
+        value=f"🪜 **{p.floor_number}층** · 👑 {small_number(p.highest_floor)}",
+        inline=False,
+    )
+
+
 def debug_panel_embed(guild_id: int, user_id: int, note: str = "") -> discord.Embed:
     p = db.get_player(guild_id, user_id)
     embed = discord.Embed(title="디버그")
     if note:
         embed.description = note
-    embed.add_field(
-        name="플레이어",
-        value=(
-            f"🪜 **{p.floor_number}층** · 👑 {small_number(p.highest_floor)}\n"
-            f"❤️ `{p.hp}/{player_max_hp(p)}` · 🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}\n"
-            f"⚔️ {small_number(attack_power(p))} · 🛡️ {small_number(defense_power(p))}"
-        ),
-        inline=False,
-    )
+    add_status_fields(embed, p)
     embed.set_footer(text="DEBUG_USER_ID와 일치하는 계정만 사용할 수 있다.")
     return embed
 
@@ -4081,9 +4100,9 @@ class DebugGearSelect(discord.ui.Select):
             max_values=1,
             row=3,
             options=[
-                discord.SelectOption(label="무기 버리기", value="weapon", description="기본 무기로 되돌린다."),
+                discord.SelectOption(label="무기 버리기", value="weapon"),
                 discord.SelectOption(label="반지 버리기", value="ring"),
-                discord.SelectOption(label="방패 버리기", value="shield", description="기본 방패로 되돌린다."),
+                discord.SelectOption(label="방패 버리기", value="shield"),
                 discord.SelectOption(label="투구 버리기", value="head"),
             ],
         )
@@ -4122,7 +4141,7 @@ class DebugView(discord.ui.View):
             ("층 이동", None, discord.ButtonStyle.primary, 0, "floor"),
             ("5층 마법상점", "🔮", discord.ButtonStyle.secondary, 0, "magic5"),
             ("10층 마법상점", "🔮", discord.ButtonStyle.secondary, 0, "magic10"),
-            ("비밀 상점", "🛒", discord.ButtonStyle.secondary, 0, "shop"),
+            ("비밀 상점", "💰", discord.ButtonStyle.secondary, 0, "shop"),
             ("슬롯머신", "🎰", discord.ButtonStyle.secondary, 0, "slot"),
             ("코인 0", "🪙", discord.ButtonStyle.secondary, 1, "coin0"),
             ("코인 +10", "🪙", discord.ButtonStyle.secondary, 1, "coin10"),
@@ -4517,46 +4536,8 @@ async def status(interaction: discord.Interaction):
         return
 
     p = db.get_player(interaction.guild_id, interaction.user.id)
-    lives = (
-        MAX_DAILY_LIVES
-        if p.last_day != today_key()
-        else remaining_lives(p)
-    )
-
-    status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
-    def status_gear_block(slot_name: str, gear: Gear) -> str:
-        _, stats = gear.label().split(" | ", 1)
-        return f"`{slot_name}` | `{gear.display_name()}`\n{stats}"
-
-    equipment_lines = [
-        status_gear_block("무기", p.weapon),
-        status_gear_block("방패", p.shield),
-    ]
-    if p.ring is not None:
-        equipment_lines.insert(1, status_gear_block("반지", p.ring))
-    if p.head is not None:
-        equipment_lines.append(status_gear_block("투구", p.head))
-
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
-    embed.add_field(
-        name="내 HP",
-        value=(
-            f"{hp_bar(p.hp, player_max_hp(p))} `{p.hp}/{player_max_hp(p)}`\n"
-            f"{combat_stat_lines(p)}\n"
-            f"{status_hearts} · 🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="장비",
-        value="\n".join(equipment_lines),
-        inline=False,
-    )
-    embed.add_field(
-        name="진행",
-        value=f"🪜 **{p.floor_number}층** · 👑 {small_number(p.highest_floor)}",
-        inline=False,
-    )
+    add_status_fields(embed, p)
     embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
     await interaction.response.send_message(
         embed=embed,
