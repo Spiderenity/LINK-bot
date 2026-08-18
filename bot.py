@@ -438,6 +438,9 @@ class GameSession:
     hurt_this_battle: bool = False
     magic_shop_stock: list[Gear] = field(default_factory=list)
     magic_shop_used: bool = False
+    pending_loot: Optional[Gear] = None
+    pending_loot_note: str = ""
+    pending_loot_footer: str = ""
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -477,6 +480,18 @@ class Database:
                     checkpoint_floor INTEGER NOT NULL DEFAULT 0,
                     lives_used INTEGER NOT NULL DEFAULT 0,
                     tutorial_completed INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS saved_runs (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    day_key TEXT NOT NULL,
+                    floor_number INTEGER NOT NULL,
+                    state_json TEXT NOT NULL,
                     PRIMARY KEY (guild_id, user_id)
                 )
                 """
@@ -638,6 +653,41 @@ class Database:
             )
             con.commit()
 
+    def save_run(self, guild_id: int, user_id: int, day_key: str, floor_number: int, state_json: str):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO saved_runs (guild_id, user_id, day_key, floor_number, state_json)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    day_key=excluded.day_key,
+                    floor_number=excluded.floor_number,
+                    state_json=excluded.state_json
+                """,
+                (guild_id, user_id, day_key, floor_number, state_json),
+            )
+            con.commit()
+
+    def load_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT day_key, floor_number, state_json
+                FROM saved_runs
+                WHERE guild_id=? AND user_id=?
+                """,
+                (guild_id, user_id),
+            ).fetchone()
+
+    def delete_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM saved_runs WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
+            )
+            con.commit()
+
+
     def leaderboard(self, guild_id: int, limit: int = 10):
         with self.connect() as con:
             return con.execute(
@@ -697,11 +747,192 @@ class Database:
         p.floor_number = max(1, p.checkpoint_floor + 1)
         p.lives_used = 0
         self.save_player(p)
+        self.delete_run(guild_id, user_id)
 
 
 db = Database(DB_PATH)
 sessions: Dict[Tuple[int, int], GameSession] = {}
 tutorial_sessions: Dict[Tuple[int, int], GameSession] = {}
+
+
+def gear_state(gear: Optional[Gear]):
+    if gear is None:
+        return None
+    return {
+        "kind": gear.kind,
+        "name": gear.name,
+        "power": gear.power,
+        "affinity": dict(gear.affinity),
+        "hp_bonus": gear.hp_bonus,
+        "magic": gear.magic,
+    }
+
+
+def gear_from_state(data):
+    if not data:
+        return None
+    return Gear(
+        str(data.get("kind", "weapon")),
+        str(data.get("name", "이름 없는 장비")),
+        int(data.get("power", 0)),
+        {color: int(data.get("affinity", {}).get(color, 0)) for color in COLORS},
+        int(data.get("hp_bonus", 0)),
+        data.get("magic"),
+    )
+
+
+def enemy_state(enemy: Optional[Enemy]):
+    if enemy is None:
+        return None
+    return {
+        "shape": enemy.shape,
+        "color": enemy.color,
+        "hp": enemy.hp,
+        "max_hp": enemy.max_hp,
+        "damage": enemy.damage,
+        "boss": enemy.boss,
+    }
+
+
+def enemy_from_state(data):
+    if not data:
+        return None
+    return Enemy(
+        str(data["shape"]),
+        str(data["color"]),
+        int(data["hp"]),
+        int(data["max_hp"]),
+        int(data["damage"]),
+        bool(data.get("boss", False)),
+        0,
+        0.0,
+    )
+
+
+def room_state(room: Room):
+    return {
+        "pos": list(room.pos),
+        "kind": room.kind,
+        "visited": room.visited,
+        "cleared": room.cleared,
+        "enemy": enemy_state(room.enemy),
+        "shop_stock": [gear_state(gear) for gear in room.shop_stock],
+        "bomb_stock": room.bomb_stock,
+        "slot_uses": room.slot_uses,
+        "slot_broken": room.slot_broken,
+    }
+
+
+def room_from_state(data):
+    pos = tuple(int(v) for v in data["pos"])
+    room = Room(
+        pos=pos,
+        kind=str(data.get("kind", "normal")),
+        visited=bool(data.get("visited", False)),
+        cleared=bool(data.get("cleared", False)),
+        enemy=enemy_from_state(data.get("enemy")),
+        shop_stock=[gear for item in data.get("shop_stock", []) if (gear := gear_from_state(item)) is not None],
+        bomb_stock=int(data.get("bomb_stock", 0)),
+        slot_uses=int(data.get("slot_uses", 0)),
+        slot_broken=bool(data.get("slot_broken", False)),
+    )
+    return room
+
+
+def session_state(session: GameSession):
+    return {
+        "version": 1,
+        "day_key": session.day_key,
+        "floor_number": session.floor_number,
+        "rooms": [room_state(room) for room in session.rooms.values()],
+        "current": list(session.current),
+        "boss_pos": list(session.boss_pos),
+        "secret_pos": list(session.secret_pos),
+        "secret_from": list(session.secret_from),
+        "secret_direction": session.secret_direction,
+        "secret_revealed": session.secret_revealed,
+        "boss_defeated": session.boss_defeated,
+        "previous": list(session.previous) if session.previous is not None else None,
+        "run_failed": session.run_failed,
+        "magic_shop_stock": [gear_state(gear) for gear in session.magic_shop_stock],
+        "magic_shop_used": session.magic_shop_used,
+        "pending_loot": gear_state(session.pending_loot),
+        "pending_loot_note": session.pending_loot_note,
+        "pending_loot_footer": session.pending_loot_footer,
+    }
+
+
+def session_from_state(guild_id: int, user_id: int, raw: str):
+    data = json.loads(raw)
+    rooms = {}
+    for room_data in data.get("rooms", []):
+        room = room_from_state(room_data)
+        rooms[room.pos] = room
+    if not rooms:
+        raise ValueError("저장된 맵에 방이 없습니다.")
+    current = tuple(int(v) for v in data.get("current", (0, 0)))
+    boss_pos = tuple(int(v) for v in data["boss_pos"])
+    secret_pos = tuple(int(v) for v in data["secret_pos"])
+    secret_from = tuple(int(v) for v in data["secret_from"])
+    if current not in rooms or boss_pos not in rooms or secret_pos not in rooms:
+        raise ValueError("저장된 맵 좌표가 올바르지 않습니다.")
+    previous_data = data.get("previous")
+    previous = tuple(int(v) for v in previous_data) if previous_data is not None else None
+    session = GameSession(
+        guild_id=guild_id,
+        user_id=user_id,
+        day_key=str(data["day_key"]),
+        floor_number=int(data["floor_number"]),
+        rooms=rooms,
+        current=current,
+        boss_pos=boss_pos,
+        secret_pos=secret_pos,
+        secret_from=secret_from,
+        secret_direction=str(data["secret_direction"]),
+        secret_revealed=bool(data.get("secret_revealed", False)),
+        boss_defeated=bool(data.get("boss_defeated", False)),
+        phase="explore",
+        previous=previous,
+        run_failed=bool(data.get("run_failed", False)),
+        magic_shop_stock=[gear for item in data.get("magic_shop_stock", []) if (gear := gear_from_state(item)) is not None],
+        magic_shop_used=bool(data.get("magic_shop_used", False)),
+        pending_loot=gear_from_state(data.get("pending_loot")),
+        pending_loot_note=str(data.get("pending_loot_note", "")),
+        pending_loot_footer=str(data.get("pending_loot_footer", "")),
+    )
+    room = session.room()
+    if room.kind in ("normal", "boss") and not room.cleared and room.enemy is not None:
+        session.phase = "battle_ready"
+    return session
+
+
+def persist_session(session: GameSession):
+    if session.is_tutorial:
+        return
+    try:
+        if session.ended:
+            db.delete_run(session.guild_id, session.user_id)
+            return
+        raw = json.dumps(session_state(session), ensure_ascii=False, separators=(",", ":"))
+        db.save_run(session.guild_id, session.user_id, session.day_key, session.floor_number, raw)
+    except Exception as exc:
+        print(f"맵 저장에 실패했습니다: {type(exc).__name__}: {exc}")
+
+
+def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_number: int):
+    row = db.load_run(guild_id, user_id)
+    if row is None:
+        return None
+    saved_day, saved_floor, raw = row
+    if saved_day != day_key or int(saved_floor) != int(floor_number):
+        db.delete_run(guild_id, user_id)
+        return None
+    try:
+        return session_from_state(guild_id, user_id, raw)
+    except Exception as exc:
+        print(f"저장된 맵을 불러오지 못했습니다: {type(exc).__name__}: {exc}")
+        db.delete_run(guild_id, user_id)
+        return None
 
 
 def session_player(session: GameSession) -> PlayerState:
@@ -1473,6 +1704,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
 
 
 def exploration_embed(player, session, note="", footer_status=""):
+    persist_session(session)
     room = session.room()
     title = (
         f"0층 · 튜토리얼 · {room_name(room)}"
@@ -1548,6 +1780,8 @@ def exploration_embed(player, session, note="", footer_status=""):
 def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
     enemy = session.room().enemy
     assert enemy is not None
+    if not session.hit_animating:
+        persist_session(session)
 
     color_icon = COLOR_MARK[enemy.color]
     enemy_title = (
@@ -1644,6 +1878,7 @@ async def animate_enemy_defeat(interaction, player, session, note):
 
 
 def shop_embed(player, session, note=""):
+    persist_session(session)
     room = session.room()
     embed = player_embed(player, session, "비밀 상점")
     if note:
@@ -1672,6 +1907,7 @@ def slot_cost(room, floor_number: int):
 
 
 def slot_embed(player, session, note="", footer_status=""):
+    persist_session(session)
     room = session.room()
     embed = player_embed(player, session, "🎰 슬롯머신")
     if note:
@@ -1906,6 +2142,27 @@ class CombatView(OwnerView):
 
 
 
+def loot_embed(player: PlayerState, session: GameSession, gear: Gear) -> discord.Embed:
+    enemy = session.room().enemy
+    colour = EMBED_COLORS[enemy.color] if enemy is not None else None
+    embed = player_embed(
+        player,
+        session,
+        "전리품 발견",
+        colour=colour,
+        show_resources=False,
+    )
+    if session.pending_loot_note:
+        embed.description = session.pending_loot_note
+    if session.pending_loot_footer:
+        embed.set_footer(text=session.pending_loot_footer)
+    current = equipped_gear(player, gear.kind)
+    item_name = gear_slot_name(gear.kind)
+    embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
+    embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "`없음`", inline=False)
+    return embed
+
+
 class LootView(OwnerView):
     def __init__(self, session, gear):
         super().__init__(session)
@@ -1926,6 +2183,9 @@ class LootView(OwnerView):
             p = session_player(session)
             equip_gear(p, gear)
             save_session_player(session, p)
+            session.pending_loot = None
+            session.pending_loot_note = ""
+            session.pending_loot_footer = ""
             await show_after_clear(
                 interaction,
                 session,
@@ -1933,6 +2193,9 @@ class LootView(OwnerView):
             )
 
         async def skip_callback(interaction):
+            session.pending_loot = None
+            session.pending_loot_note = ""
+            session.pending_loot_footer = ""
             await show_after_clear(
                 interaction,
                 session,
@@ -2144,6 +2407,7 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
 
             damage = enemy.bleed_stacks
             enemy.hp -= damage
+            persist_session(session)
             next_tick += BLEED_TICK_SECONDS
 
             if enemy.hp <= 0:
@@ -2759,23 +3023,14 @@ async def enemy_defeated(interaction, session, combat_note):
             boss_drop=enemy.boss,
             floor_number=session.floor_number,
         )
-        embed = player_embed(
-            p,
-            session,
-            "전리품 발견",
-            colour=EMBED_COLORS[enemy.color],
-            show_resources=False,
-        )
-        embed.description = combat_note
-        embed.set_footer(text=reward_status)
-        current = equipped_gear(p, gear.kind)
-        item_name = gear_slot_name(gear.kind)
-        embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
-        embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "`없음`", inline=False)
+        session.pending_loot = gear
+        session.pending_loot_note = combat_note
+        session.pending_loot_footer = reward_status
+        persist_session(session)
 
         await edit_interaction_message(
             interaction,
-            embed=embed,
+            embed=loot_embed(p, session, gear),
             view=LootView(session, gear),
         )
         return
@@ -2830,6 +3085,7 @@ async def player_died(interaction, session, note, footer_status=""):
     p = session_player(session)
     p.hp = 0
     session.ended = True
+    persist_session(session)
 
     if session.is_tutorial:
         embed = player_embed(p, session, "게임 오버")
@@ -2859,6 +3115,7 @@ async def player_died_background(interaction, session, note):
     p = session_player(session)
     p.hp = 0
     session.ended = True
+    persist_session(session)
 
     if session.is_tutorial:
         embed = player_embed(p, session, "게임 오버")
@@ -2965,6 +3222,7 @@ async def climb_next_floor(interaction, session):
     save_session_player(session, p)
 
     session.ended = True
+    persist_session(session)
 
     trivia = random.choice(FLOOR_TRIVIA)
     loading_steps = [
@@ -3020,6 +3278,7 @@ async def climb_next_floor(interaction, session):
 
 
 def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> discord.Embed:
+    persist_session(session)
     embed = discord.Embed(
         title=f"{session.floor_number}층 · 마법 상점",
         description=note or "🔮 보스 방 한쪽에서 이상한 상인이 기다리고 있다.\n**한 가지만 살 수 있다.**",
@@ -3453,6 +3712,8 @@ async def game(interaction: discord.Interaction):
 
 
     if p.last_day != today:
+        db.delete_run(guild_id, user_id)
+        db.delete_run(guild_id, user_id)
         old = sessions.pop(key, None)
         if old:
             cancel_cue(old)
@@ -3531,11 +3792,24 @@ async def game(interaction: discord.Interaction):
         db.save_player(p)
 
     old = sessions.get(key)
+    restored_from_disk = False
+    if old is None:
+        old = load_persisted_session(guild_id, user_id, today, p.floor_number)
+        if old is not None:
+            sessions[key] = old
+            restored_from_disk = True
+
     if old and not old.ended and old.day_key == today:
         room = old.room()
 
-        if room.kind in ("normal", "boss") and not room.cleared:
-            flee_note = flee_overpowered_enemy(old, p)
+        if old.pending_loot is not None:
+            await interaction.response.send_message(
+                embed=loot_embed(p, old, old.pending_loot),
+                view=LootView(old, old.pending_loot),
+                ephemeral=True,
+            )
+        elif room.kind in ("normal", "boss") and not room.cleared:
+            flee_note = None if restored_from_disk else flee_overpowered_enemy(old, p)
             if flee_note:
                 await interaction.response.send_message(
                     embed=exploration_embed(p, old, flee_note),
@@ -3545,8 +3819,9 @@ async def game(interaction: discord.Interaction):
                 return
             cancel_cue(old)
             old.phase = "battle_ready"
+            note = "저장된 전투로 돌아왔다. 다시 전투를 시작하자!" if restored_from_disk else "전투 화면으로 돌아왔다. 다시 전투를 시작하자!"
             await interaction.response.send_message(
-                embed=combat_embed(p, old, "전투 화면으로 돌아왔다. 다시 전투를 시작하자!"),
+                embed=combat_embed(p, old, note),
                 view=BattleStartView(old),
                 ephemeral=True,
             )
@@ -3563,8 +3838,9 @@ async def game(interaction: discord.Interaction):
                 ephemeral=True,
             )
         else:
+            note = "저장된 층으로 돌아왔다." if restored_from_disk else "진행 중인 층으로 돌아왔다."
             await interaction.response.send_message(
-                embed=exploration_embed(p, old, "진행 중인 층으로 돌아왔다."),
+                embed=exploration_embed(p, old, note),
                 view=ExploreView(old),
                 ephemeral=True,
             )
@@ -3637,13 +3913,13 @@ async def status(interaction: discord.Interaction):
 
     status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
     equipment_lines = [
-        f"⚔️ **무기** · {p.weapon.label()}",
-        f"🛡️ **방패** · {p.shield.label()}",
+        f"⚔️ **무기** · {p.weapon.label().replace(' | ', chr(10), 1)}",
+        f"🛡️ **방패** · {p.shield.label().replace(' | ', chr(10), 1)}",
     ]
     if p.ring is not None:
-        equipment_lines.insert(1, f"💍 **반지** · {p.ring.label()}")
+        equipment_lines.insert(1, f"💍 **반지** · {p.ring.label().replace(' | ', chr(10), 1)}")
     if p.head is not None:
-        equipment_lines.append(f"⛑️ **투구** · {p.head.label()}")
+        equipment_lines.append(f"⛑️ **투구** · {p.head.label().replace(' | ', chr(10), 1)}")
 
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
