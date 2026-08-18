@@ -264,13 +264,13 @@ class Gear:
             for color in COLORS
         )
         if self.kind == "weapon":
-            stats = f"⚔️ {self.power} · {pips}"
+            stats = f"⚔️ `{self.power}` · {pips}"
         elif self.kind == "ring":
-            stats = f"⚔️ +{self.power} · {pips}"
+            stats = f"⚔️ `+{self.power}` · {pips}"
         elif self.kind == "shield":
-            stats = f"🛡️ {self.power} · ❤️ +{self.hp_bonus} · {pips}"
+            stats = f"🛡️ `{self.power}` · ❤️ `+{self.hp_bonus}` · {pips}"
         else:
-            stats = f"🛡️ {self.power} · ❤️ +{self.hp_bonus} · {pips}"
+            stats = f"🛡️ `{self.power}` · ❤️ `+{self.hp_bonus}` · {pips}"
         if self.magic:
             effect = MAGIC_EFFECTS.get(self.magic, self.magic)
             return f"{self.display_name()} | {stats}\n✨ {effect}"
@@ -3294,7 +3294,7 @@ def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> disc
             ),
             inline=False,
         )
-    embed.set_footer(text=f"🪙 현재 코인 {player.coins}")
+    embed.set_footer(text=f"🪙 현재 코인 `{player.coins}`")
     return embed
 
 
