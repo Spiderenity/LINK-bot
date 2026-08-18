@@ -4512,13 +4512,13 @@ async def status(interaction: discord.Interaction):
 
     status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
     equipment_lines = [
-        f"⚔️ **무기** · {p.weapon.label().replace(' | ', chr(10), 1)}",
-        f"🛡️ **방패** · {p.shield.label().replace(' | ', chr(10), 1)}",
+        f"**무기** · {p.weapon.label().replace(' | ', chr(10), 1)}",
+        f"**방패** · {p.shield.label().replace(' | ', chr(10), 1)}",
     ]
     if p.ring is not None:
-        equipment_lines.insert(1, f"💍 **반지** · {p.ring.label().replace(' | ', chr(10), 1)}")
+        equipment_lines.insert(1, f"**반지** · {p.ring.label().replace(' | ', chr(10), 1)}")
     if p.head is not None:
-        equipment_lines.append(f"⛑️ **투구** · {p.head.label().replace(' | ', chr(10), 1)}")
+        equipment_lines.append(f"**투구** · {p.head.label().replace(' | ', chr(10), 1)}")
 
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
