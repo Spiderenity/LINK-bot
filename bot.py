@@ -1559,6 +1559,55 @@ def timing_grade(seconds: float, perfect: float, good: float):
     return "MISS"
 
 
+EMPTY_ROOM_ORDINARY = [
+    "바닥에 먼지가 쌓여 있다.",
+    "벽에 긁힌 자국이 있다.",
+    "천장에서 물이 한 방울 떨어졌다.",
+    "구석에 빈 상자가 놓여 있다.",
+    "낡은 전선이 벽을 따라 이어져 있다.",
+    "바닥이 조금 기울어져 있다.",
+    "깨진 전구가 매달려 있다.",
+    "녹슨 나사가 하나 떨어져 있다.",
+    "벽 한쪽의 페인트가 벗겨져 있다.",
+]
+
+EMPTY_ROOM_LIVED_IN = [
+    "누군가 여기서 잠깐 쉬었던 것 같다.",
+    "벽에 오래된 낙서가 남아 있다.",
+    "찌그러진 깡통이 구석에 굴러다닌다.",
+    "접힌 종이 한 장이 젖어서 바닥에 붙어 있다.",
+    "빈 병 몇 개가 가지런히 놓여 있다.",
+    "의자 하나가 벽을 바라보고 있다.",
+    "누군가 바닥에 선을 여러 번 그었다.",
+    "작은 발자국이 먼지 위에 남아 있다.",
+    "벽에 테이프 자국만 남아 있다.",
+    "구석에서 오래된 담요 조각을 발견했다.",
+]
+
+EMPTY_ROOM_FALSE_CLUES = [
+    "벽에 붉은 선이 하나 그어져 있다.",
+    "바닥에 작은 금속 조각들이 원을 이루고 있다.",
+    "누군가 문틀에 세 개의 홈을 냈다.",
+    "벽에 알아볼 수 없는 이름이 적혀 있다.",
+    "낡은 표지판의 글자가 모두 지워져 있다.",
+    "천장에 화살표가 그려져 있다. 어디를 가리키는지는 모르겠다.",
+    "바닥에 오래된 신발 한 짝이 있다.",
+    "끊어진 자물쇠가 놓여 있다.",
+    "벽에 손바닥 자국 하나가 남아 있다.",
+    "문 옆에 날짜처럼 보이는 숫자가 적혀 있다.",
+]
+
+def empty_room_flavor() -> str:
+    roll = random.random()
+    if roll < 0.50:
+        return "아무것도 없다."
+    if roll < 0.90:
+        return random.choice(EMPTY_ROOM_ORDINARY)
+    if roll < 0.99:
+        return random.choice(EMPTY_ROOM_LIVED_IN)
+    return random.choice(EMPTY_ROOM_FALSE_CLUES)
+
+
 def room_name(room: Room):
     return {
         "start": "시작 방",
@@ -2627,7 +2676,7 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                "아무것도 없다.",
+                empty_room_flavor(),
             ),
             view=ExploreView(session),
         )
@@ -3959,11 +4008,15 @@ async def leaderboard(interaction: discord.Interaction):
     rows = db.leaderboard(interaction.guild_id)
     lines = []
 
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     for rank, (user_id, floor_number, coins) in enumerate(rows, 1):
         member = interaction.guild.get_member(user_id)
         name = member.display_name if member else f"<@{user_id}>"
+        if rank == 4:
+            lines.append("")
+        rank_mark = medals.get(rank, f"{rank}.")
         lines.append(
-            f"`{rank:>2}.` {name} — 🪜 {small_number(floor_number)} · 🪙 {small_number(coins)}"
+            f"{rank_mark} {name} — 🪜 {small_number(floor_number)} · 🪙 {small_number(coins)}"
         )
 
     embed = discord.Embed(
