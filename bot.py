@@ -93,6 +93,11 @@ MAGIC_KINDS = {
 MAGIC_POOL = tuple(MAGIC_KINDS)
 DEFEAT_SHAKE_FRAME_DELAY = 0.18
 DEFEAT_SHAKE_END_HOLD = 0.28
+SUPERSCRIPT_TRANS = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
+
+
+def small_number(value) -> str:
+    return str(value).translate(SUPERSCRIPT_TRANS)
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 
@@ -258,19 +263,18 @@ class Gear:
         return MAGIC_NAMES.get(self.magic, self.name) if self.magic else self.name
 
     def label(self) -> str:
-        superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
         pips = " ".join(
-            f"{COLOR_MARK[color]}{str(self.affinity.get(color, 0)).translate(superscript)}"
+            f"{COLOR_MARK[color]}{small_number(self.affinity.get(color, 0))}"
             for color in COLORS
         )
         if self.kind == "weapon":
-            stats = f"⚔️ `{self.power}` · {pips}"
+            stats = f"⚔️ {small_number(self.power)} · {pips}"
         elif self.kind == "ring":
-            stats = f"⚔️ `+{self.power}` · {pips}"
+            stats = f"⚔️ {small_number(f'+{self.power}')} · {pips}"
         elif self.kind == "shield":
-            stats = f"🛡️ `{self.power}` · ❤️ `+{self.hp_bonus}` · {pips}"
+            stats = f"🛡️ {small_number(self.power)} · ❤️ {small_number(f'+{self.hp_bonus}')} · {pips}"
         else:
-            stats = f"🛡️ `{self.power}` · ❤️ `+{self.hp_bonus}` · {pips}"
+            stats = f"🛡️ {small_number(self.power)} · ❤️ {small_number(f'+{self.hp_bonus}')} · {pips}"
         if self.magic:
             effect = MAGIC_EFFECTS.get(self.magic, self.magic)
             return f"{self.display_name()} | {stats}\n✨ {effect}"
@@ -1654,25 +1658,23 @@ def map_ascii(session: GameSession):
 
 
 def gear_affinity_line(gear: Gear) -> str:
-    superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
     return " ".join(
-        f"{COLOR_MARK[color]}{str(gear.affinity.get(color, 0)).translate(superscript)}"
+        f"{COLOR_MARK[color]}{small_number(gear.affinity.get(color, 0))}"
         for color in COLORS
     )
 
 
 def combined_affinity_line(player: PlayerState, offensive: bool) -> str:
-    superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
     return " ".join(
-        f"{COLOR_MARK[color]}{str((attack_affinity if offensive else defense_affinity)(player, color)).translate(superscript)}"
+        f"{COLOR_MARK[color]}{small_number((attack_affinity if offensive else defense_affinity)(player, color))}"
         for color in COLORS
     )
 
 
 def combat_stat_lines(player: PlayerState) -> str:
     return (
-        f"⚔️ `{attack_power(player)}` · {combined_affinity_line(player, True)}\n"
-        f"🛡️ `{defense_power(player)}` · {combined_affinity_line(player, False)}"
+        f"⚔️ {small_number(attack_power(player))} · {combined_affinity_line(player, True)}\n"
+        f"🛡️ {small_number(defense_power(player))} · {combined_affinity_line(player, False)}"
     )
 
 
@@ -1682,9 +1684,9 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
         title = f"0층 · 튜토리얼 · {title}"
 
     resource_line = (
-        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
-        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
     )
 
     value = (
@@ -1730,9 +1732,9 @@ def exploration_embed(player, session, note="", footer_status=""):
         around.append(f"🪜 **{session.floor_number + 1}층**")
 
     resources = (
-        f"🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
-        else f"{life_hearts(player)} · 🪙 `{player.coins}` · 💣 `{player.bombs}`"
+        else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
     )
 
     parts = []
@@ -1814,7 +1816,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
         value=(
             f"{enemy_hp_bar(enemy)} "
             f"`{max(0, enemy.hp)}/{enemy.max_hp}`\n"
-            f"⚔️ `{enemy.damage}`"
+            f"⚔️ {small_number(enemy.damage)}"
             f"{bleed_line}{critical_line}"
         ),
         inline=False,
@@ -1826,7 +1828,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
             f"{hp_bar(player.hp, player_max_hp(player))} "
             f"`{player.hp}/{player_max_hp(player)}`\n"
             f"{combat_stat_lines(player)}\n"
-            f"💣 `{player.bombs}`"
+            f"💣 {small_number(player.bombs)}"
         ),
         inline=False,
     )
@@ -1887,10 +1889,10 @@ def shop_embed(player, session, note=""):
     lines = []
     for i, gear in enumerate(room.shop_stock[:2], 1):
         price = gear_price(gear, session.floor_number)
-        lines.append(f"{i}. `{price}코인` — {gear.label()}")
+        lines.append(f"{i}. 🪙 {small_number(price)} — {gear.label()}")
     price = bomb_price(session.floor_number)
     if room.bomb_stock > 0:
-        lines.append(f"3. `{price}코인` — 폭탄 +1 · 재고 `{room.bomb_stock}`")
+        lines.append(f"3. 🪙 {small_number(price)} — 💣 +¹ · 재고 {small_number(room.bomb_stock)}")
     else:
         lines.append("3. **SOLD OUT** — 폭탄")
 
@@ -1916,8 +1918,8 @@ def slot_embed(player, session, note="", footer_status=""):
         name="기계",
         value=(
             f"상태: **{'고장' if room.slot_broken else '작동 중'}**\n"
-            f"사용 횟수: `{room.slot_uses}`\n"
-            f"1회 비용: `{slot_cost(room, session.floor_number)}코인`"
+            f"사용 횟수: {small_number(room.slot_uses)}\n"
+            f"1회 비용: 🪙 {small_number(slot_cost(room, session.floor_number))}"
         ),
         inline=False,
     )
@@ -2216,7 +2218,7 @@ class MagicShopView(OwnerView):
         for index, gear in enumerate(session.magic_shop_stock[:3]):
             price = magic_price(gear, session.floor_number)
             btn = discord.ui.Button(
-                label=f"{index + 1}번 ({price})",
+                label=f"{index + 1}번 ({small_number(price)})",
                 style=discord.ButtonStyle.success,
                 disabled=session.magic_shop_used or p.coins < price,
             )
@@ -2253,7 +2255,7 @@ class ShopView(OwnerView):
         for index, gear in enumerate(room.shop_stock[:2]):
             price = gear_price(gear, session.floor_number)
             btn = discord.ui.Button(
-                label=f"{index + 1}번 ({price})",
+                label=f"{index + 1}번 ({small_number(price)})",
                 style=discord.ButtonStyle.success,
                 disabled=p.coins < price,
             )
@@ -2266,7 +2268,7 @@ class ShopView(OwnerView):
 
         price = bomb_price(session.floor_number)
         bomb = discord.ui.Button(
-            label=f"{price}코인" if room.bomb_stock > 0 else "SOLD OUT",
+            label=f"{small_number(price)}코인" if room.bomb_stock > 0 else "SOLD OUT",
             emoji="💣",
             style=discord.ButtonStyle.secondary,
             disabled=room.bomb_stock <= 0 or p.coins < price,
@@ -2302,7 +2304,7 @@ class SlotView(OwnerView):
 
         cost = slot_cost(room, session.floor_number)
         play = discord.ui.Button(
-            label=f"{cost}코인",
+            label=f"{small_number(cost)}코인",
             emoji="🎰",
             style=discord.ButtonStyle.success,
             disabled=room.slot_broken or p.coins < cost,
@@ -2419,7 +2421,7 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
                 await enemy_defeated(
                     interaction,
                     session,
-                    f"🩸 **BLEED!** 적에게 **{damage} 피해!**",
+                    f"🩸 **BLEED!** 적에게 **{small_number(damage)} 피해!**",
                 )
                 return
 
@@ -2535,7 +2537,7 @@ async def timeout_timing(interaction, session, kind, token):
     if damage > 0:
         session.hurt_this_battle = True
     save_session_player(session, p)
-    note = f"**MISS!** 늦었다. **{damage} 피해**."
+    note = f"**MISS!** 늦었다. **{small_number(damage)} 피해**."
 
     if p.hp <= 0:
         await player_died_background(interaction, session, note)
@@ -2612,7 +2614,7 @@ async def move_player(interaction, session, direction, target):
                 p,
                 session,
                 "✨ 반짝이는 것을 주웠다.",
-                footer_status=f"🪙 코인을 {amount}개 획득했다!",
+                footer_status=f"🪙 코인을 {small_number(amount)}개 획득했다!",
             ),
             view=ExploreView(session),
         )
@@ -2666,7 +2668,7 @@ async def break_pot(interaction, session):
         p.coins += amount
         save_session_player(session, p)
         note = "🏺 항아리를 깼다! 반짝이는 것이 보인다."
-        footer_status = f"🪙 코인을 {amount}개 얻었다!"
+        footer_status = f"🪙 코인을 {small_number(amount)}개 얻었다!"
     elif roll < 0.80:
         note = "🏺 항아리를 깼다! 아무것도 없다."
         footer_status = ""
@@ -2799,9 +2801,9 @@ async def press_timing(interaction, session, kind):
             session.hurt_this_battle = True
         save_session_player(session, p)
         note = (
-            f"**MISS!** 페이크였다. **{damage} 피해**."
+            f"**MISS!** 페이크였다. **{small_number(damage)} 피해**."
             if bait
-            else f"**MISS!** 너무 빨랐다. **{damage} 피해**."
+            else f"**MISS!** 너무 빨랐다. **{small_number(damage)} 피해**."
         )
         if p.hp <= 0:
             await player_died(interaction, session, note)
@@ -2832,13 +2834,13 @@ async def press_timing(interaction, session, kind):
         if grade == "PERFECT":
             note = (
                 f"💥 **SMAAAASH!!**\n"
-                f"`{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
+                f"`{elapsed:.2f}초` — 적에게 **{small_number(damage)} 피해!**"
             )
             if enemy.hp > 0:
                 stacks = apply_bleed(enemy, p)
                 schedule_bleed(interaction, session)
         elif grade == "GOOD":
-            note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
+            note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{small_number(damage)} 피해!**"
         else:
             note = f"**MISS!** · `{elapsed:.2f}초` — 공격이 빗나갔다."
 
@@ -2867,14 +2869,14 @@ async def press_timing(interaction, session, kind):
         enemy.hp -= counter
         note = (
             f"🛡️ **PERFECT GUARD!!**\n"
-            f"`{elapsed:.2f}초` — 피해 **0** · 반격 **{counter} 피해!**"
+            f"`{elapsed:.2f}초` — 피해 **⁰** · 반격 **{small_number(counter)} 피해!**"
         )
     else:
         counter = 0
         if grade == "GOOD":
-            note = f"🛡️ **BLOCK!** · `{elapsed:.2f}초` — 받은 피해 **{damage}**."
+            note = f"🛡️ **BLOCK!** · `{elapsed:.2f}초` — 받은 피해 **{small_number(damage)}**."
         else:
-            note = f"**MISS!** · `{elapsed:.2f}초` — 받은 피해 **{damage}**."
+            note = f"**MISS!** · `{elapsed:.2f}초` — 받은 피해 **{small_number(damage)}**."
 
     if p.hp <= 0:
         await player_died(interaction, session, note)
@@ -2919,7 +2921,7 @@ async def combat_bomb(interaction, session):
 
     damage = random.randint(*BOMB_DAMAGE) + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
     enemy.hp -= damage
-    note = f"💣 **KABOOM!!** 적에게 **{damage} 피해!**"
+    note = f"💣 **KABOOM!!** 적에게 **{small_number(damage)} 피해!**"
 
     if enemy.hp <= 0:
         await enemy_defeated(interaction, session, note)
@@ -2998,9 +3000,9 @@ async def enemy_defeated(interaction, session, combat_note):
     p.bombs += bomb_gain
     save_session_player(session, p)
 
-    reward_lines = [f"🪙 코인을 {coins}개 획득했다!"]
+    reward_lines = [f"🪙 코인을 {small_number(coins)}개 획득했다!"]
     if bomb_gain:
-        reward_lines.append("💣 폭탄을 1개 획득했다!")
+        reward_lines.append("💣 폭탄을 ¹개 획득했다!")
     if enemy.boss and has_magic(p, "head", MAGIC_HEAD_BOSS_HEAL):
         before = p.hp
         p.hp = min(player_max_hp(p), p.hp + 2)
@@ -3287,14 +3289,14 @@ def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> disc
         price = magic_price(gear, session.floor_number)
         current = equipped_gear(player, gear.kind)
         embed.add_field(
-            name=f"{index}번 · 🪙 {price}",
+            name=f"{index}번 · 🪙 {small_number(price)}",
             value=(
                 f"{gear.label()}\n"
                 f"현재 {gear_slot_name(gear.kind)}: {current.label() if current else '없음'}"
             ),
             inline=False,
         )
-    embed.set_footer(text=f"🪙 현재 코인 `{player.coins}`")
+    embed.set_footer(text=f"🪙 현재 코인 {small_number(player.coins)}")
     return embed
 
 
@@ -3342,7 +3344,7 @@ async def buy_magic_gear(interaction, session, index):
             p,
             session,
             f"**{gear.display_name()}** 구입 및 장착 완료.",
-            footer_status=f"🪙 코인을 {price}개 사용했다!",
+            footer_status=f"🪙 코인을 {small_number(price)}개 사용했다!",
         ),
         view=ExploreView(session),
     )
@@ -3407,9 +3409,9 @@ async def buy_bomb(interaction, session):
     save_session_player(session, p)
 
     note = (
-        "폭탄 **1개**를 구입했다."
+        "💣 폭탄 **¹개**를 구입했다."
         if room.bomb_stock > 0
-        else "폭탄 **1개**를 구입했다. **SOLD OUT**"
+        else "💣 폭탄 **¹개**를 구입했다. **SOLD OUT**"
     )
 
     await interaction.response.edit_message(
@@ -3450,10 +3452,10 @@ async def play_slot(interaction, session):
     elif roll < 0.68:
         gain = random.randint(2, 4) + reward_bonus
         p.coins += gain
-        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
+        footer_lines.append(f"🪙 코인을 {small_number(gain)}개 획득했다!")
     elif roll < 0.80:
         p.bombs += 1
-        footer_lines.append("💣 폭탄을 1개 획득했다!")
+        footer_lines.append("💣 폭탄을 ¹개 획득했다!")
     elif roll < 0.91:
         heal = random.randint(3, 6)
         before = p.hp
@@ -3464,7 +3466,7 @@ async def play_slot(interaction, session):
         gain = random.randint(6, 10) + reward_bonus * 2
         p.coins += gain
         note = "🎰 잭팟!"
-        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
+        footer_lines.append(f"🪙 코인을 {small_number(gain)}개 획득했다!")
 
     break_rates = [0.05, 0.10, 0.20, 0.35, 0.55, 0.75]
     break_rate = break_rates[min(room.slot_uses - 1, len(break_rates) - 1)]
@@ -3517,7 +3519,7 @@ async def bomb_slot(interaction, session):
             p,
             session,
             "💣 슬롯머신 폭파!",
-            footer_status=f"🪙 코인을 {gain}개 획득했다!",
+            footer_status=f"🪙 코인을 {small_number(gain)}개 획득했다!",
         ),
         view=SlotView(session),
     )
@@ -3927,7 +3929,7 @@ async def status(interaction: discord.Interaction):
         value=(
             f"{hp_bar(p.hp, player_max_hp(p))} `{p.hp}/{player_max_hp(p)}`\n"
             f"{combat_stat_lines(p)}\n"
-            f"코인 `{p.coins}` · 폭탄 `{p.bombs}`"
+            f"🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}"
         ),
         inline=False,
     )
