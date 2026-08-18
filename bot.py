@@ -3328,6 +3328,10 @@ def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str)
             cols=len(SHEET_HEADERS),
         )
 
+    if worksheet.col_count < len(SHEET_HEADERS):
+        worksheet.resize(cols=len(SHEET_HEADERS))
+
+    last_col = gspread.utils.rowcol_to_a1(1, len(SHEET_HEADERS)).replace("1", "")
     existing = worksheet.get_all_values()
     existing_by_user_id: dict[str, int] = {}
     for row_number, row in enumerate(existing[1:], start=2):
@@ -3336,7 +3340,7 @@ def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str)
 
     updates = [
         {
-            "range": "A1:N1",
+            "range": f"A1:{last_col}1",
             "values": [SHEET_HEADERS],
         }
     ]
@@ -3350,7 +3354,7 @@ def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str)
             next_row += 1
         updates.append(
             {
-                "range": f"A{row_number}:N{row_number}",
+                "range": f"A{row_number}:{last_col}{row_number}",
                 "values": [row],
             }
         )
@@ -3632,6 +3636,15 @@ async def status(interaction: discord.Interaction):
     )
 
     status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
+    equipment_lines = [
+        f"⚔️ **무기** · {p.weapon.label()}",
+        f"🛡️ **방패** · {p.shield.label()}",
+    ]
+    if p.ring is not None:
+        equipment_lines.insert(1, f"💍 **반지** · {p.ring.label()}")
+    if p.head is not None:
+        equipment_lines.append(f"⛑️ **투구** · {p.head.label()}")
+
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
         name=f"내 HP {status_hearts}",
@@ -3640,6 +3653,11 @@ async def status(interaction: discord.Interaction):
             f"{combat_stat_lines(p)}\n"
             f"코인 `{p.coins}` · 폭탄 `{p.bombs}`"
         ),
+        inline=False,
+    )
+    embed.add_field(
+        name="장비",
+        value="\n".join(equipment_lines),
         inline=False,
     )
     embed.add_field(
