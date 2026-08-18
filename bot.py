@@ -3940,12 +3940,10 @@ async def status(interaction: discord.Interaction):
     )
     embed.add_field(
         name="진행",
-        value=(
-            f"🪜 {small_number(p.floor_number)} · 👑 {small_number(p.highest_floor)}\n"
-            f"`{p.last_day or '미시작'}` · `{p.status}`"
-        ),
+        value=f"🪜 {small_number(p.floor_number)} · 👑 {small_number(p.highest_floor)}",
         inline=False,
     )
+    embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -3965,7 +3963,7 @@ async def leaderboard(interaction: discord.Interaction):
         member = interaction.guild.get_member(user_id)
         name = member.display_name if member else f"<@{user_id}>"
         lines.append(
-            f"`{rank:>2}.` {name} — **{floor_number}층** · `{coins} 코인`"
+            f"`{rank:>2}.` {name} — 🪜 {small_number(floor_number)} · 🪙 {small_number(coins)}"
         )
 
     embed = discord.Embed(
