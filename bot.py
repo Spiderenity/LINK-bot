@@ -100,6 +100,17 @@ def small_number(value) -> str:
     return str(value).translate(SUPERSCRIPT_TRANS)
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
+ENEMY_MODIFIERS = (
+    "졸린",
+    "멍한",
+    "신경질적인",
+    "겁이 많은",
+    "산만한",
+    "먼지투성이",
+    "축축한",
+    "잔뜩 웅크린",
+)
+ENEMY_MODIFIER_CHANCE = 0.20
 
 SHAPES = {
     "크랩": {
@@ -368,6 +379,7 @@ class Enemy:
     boss: bool = False
     bleed_stacks: int = 0
     bleed_expires_at: float = 0.0
+    modifier: Optional[str] = None
 
     @property
     def art(self) -> str:
@@ -385,6 +397,7 @@ class Room:
     bomb_stock: int = 0
     slot_uses: int = 0
     slot_broken: bool = False
+    flavor: str = ""
 
 
 @dataclass
@@ -795,6 +808,7 @@ def enemy_state(enemy: Optional[Enemy]):
         "max_hp": enemy.max_hp,
         "damage": enemy.damage,
         "boss": enemy.boss,
+        "modifier": enemy.modifier,
     }
 
 
@@ -810,6 +824,7 @@ def enemy_from_state(data):
         bool(data.get("boss", False)),
         0,
         0.0,
+        data.get("modifier"),
     )
 
 
@@ -824,6 +839,7 @@ def room_state(room: Room):
         "bomb_stock": room.bomb_stock,
         "slot_uses": room.slot_uses,
         "slot_broken": room.slot_broken,
+        "flavor": room.flavor,
     }
 
 
@@ -839,6 +855,7 @@ def room_from_state(data):
         bomb_stock=int(data.get("bomb_stock", 0)),
         slot_uses=int(data.get("slot_uses", 0)),
         slot_broken=bool(data.get("slot_broken", False)),
+        flavor=str(data.get("flavor", "")),
     )
     return room
 
@@ -1188,8 +1205,19 @@ def make_enemy(boss=False, floor_number: int = 1) -> Enemy:
 
     hp = random.randint(*spec["hp"]) + floor_bonus * (4 if boss else 2)
     damage = random.randint(*spec["damage"]) + floor_bonus // 2
+    modifier = None
+    if not boss and random.random() < ENEMY_MODIFIER_CHANCE:
+        modifier = random.choice(ENEMY_MODIFIERS)
 
-    return Enemy(shape, color, hp, hp, damage, boss)
+    return Enemy(shape, color, hp, hp, damage, boss, modifier=modifier)
+
+
+def enemy_display_name(enemy: Enemy) -> str:
+    parts = []
+    if enemy.modifier:
+        parts.append(enemy.modifier)
+    parts.extend((enemy.color, enemy.shape))
+    return " ".join(parts)
 
 
 def bfs_distances(positions, start=(0, 0)):
@@ -1530,7 +1558,7 @@ def flee_overpowered_enemy(session: GameSession, player: PlayerState) -> str:
     room.cleared = True
     session.phase = "explore"
     cancel_bleed(session, clear=True)
-    return f"👾 **{enemy.color} {enemy.shape}가 도망갔다!**"
+    return f"👾 **{enemy_display_name(enemy)}가 도망갔다!**"
 
 
 def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
@@ -1563,49 +1591,71 @@ EMPTY_ROOM_ORDINARY = [
     "바닥에 먼지가 쌓여 있다.",
     "벽에 긁힌 자국이 있다.",
     "천장에서 물이 한 방울 떨어졌다.",
-    "구석에 빈 상자가 놓여 있다.",
     "낡은 전선이 벽을 따라 이어져 있다.",
-    "바닥이 조금 기울어져 있다.",
-    "깨진 전구가 매달려 있다.",
+    "깨진 조명 하나가 천장에 매달려 있다.",
     "녹슨 나사가 하나 떨어져 있다.",
-    "벽 한쪽의 페인트가 벗겨져 있다.",
+    "벽면 패널 하나가 반쯤 떨어져 있다.",
+    "바닥의 금속 격자가 녹슬어 있다.",
+    "찌그러진 철제 보관함이 벽에 기대어 있다.",
 ]
 
 EMPTY_ROOM_LIVED_IN = [
     "누군가 여기서 잠깐 쉬었던 것 같다.",
     "벽에 오래된 낙서가 남아 있다.",
-    "찌그러진 깡통이 구석에 굴러다닌다.",
-    "접힌 종이 한 장이 젖어서 바닥에 붙어 있다.",
-    "빈 병 몇 개가 가지런히 놓여 있다.",
-    "의자 하나가 벽을 바라보고 있다.",
+    "찌그러진 음료 캔이 구석에 굴러다닌다.",
+    "철제 의자 하나가 벽을 바라보고 있다.",
     "누군가 바닥에 선을 여러 번 그었다.",
     "작은 발자국이 먼지 위에 남아 있다.",
-    "벽에 테이프 자국만 남아 있다.",
-    "구석에서 오래된 담요 조각을 발견했다.",
+    "벽면 패널에 오래된 테이프 자국이 남아 있다.",
+    "꺼진 휴대 단말기 하나가 바닥에 놓여 있다.",
+    "금속 보관함 문 안쪽에 이름 몇 개가 적혀 있다.",
 ]
 
 EMPTY_ROOM_FALSE_CLUES = [
     "벽에 붉은 선이 하나 그어져 있다.",
     "바닥에 작은 금속 조각들이 원을 이루고 있다.",
-    "누군가 문틀에 세 개의 홈을 냈다.",
-    "벽에 알아볼 수 없는 이름이 적혀 있다.",
-    "낡은 표지판의 글자가 모두 지워져 있다.",
-    "천장에 화살표가 그려져 있다. 어디를 가리키는지는 모르겠다.",
-    "바닥에 오래된 신발 한 짝이 있다.",
-    "끊어진 자물쇠가 놓여 있다.",
-    "벽에 손바닥 자국 하나가 남아 있다.",
-    "문 옆에 날짜처럼 보이는 숫자가 적혀 있다.",
+    "문틀에 일정한 간격으로 홈이 세 개 나 있다.",
+    "낡은 안내 패널의 글자가 모두 지워져 있다.",
+    "벽면 패널에 날짜처럼 보이는 숫자가 적혀 있다.",
+]
+
+POT_ROOM_FLAVORS = [
+    "검은 점토로 만들어진 항아리가 있다.",
+    "금속 띠를 두른 항아리가 있다.",
+    "크랩 가족이 그려진 항아리가 있다.",
+]
+
+COIN_ROOM_FLAVORS = [
+    "바닥 틈에서 무언가 반짝인다.",
+    "철제 패널 아래에서 코인을 발견했다.",
+    "녹슨 기계 틈에 코인이 끼어 있다.",
+    "금속 격자 아래로 코인이 보인다.",
+    "열린 철제 보관함 안쪽에서 코인이 반짝인다.",
+    "배선 덮개 틈에 코인이 끼어 있다.",
 ]
 
 def empty_room_flavor() -> str:
     roll = random.random()
-    if roll < 0.50:
+    if roll < 0.55:
         return "아무것도 없다."
-    if roll < 0.90:
+    if roll < 0.92:
         return random.choice(EMPTY_ROOM_ORDINARY)
     if roll < 0.99:
         return random.choice(EMPTY_ROOM_LIVED_IN)
     return random.choice(EMPTY_ROOM_FALSE_CLUES)
+
+
+def pot_room_flavor(room: Room) -> str:
+    if room.flavor:
+        return room.flavor
+    room.flavor = "항아리가 있다." if random.random() < 0.80 else random.choice(POT_ROOM_FLAVORS)
+    return room.flavor
+
+
+def coin_room_flavor() -> str:
+    if random.random() < 0.80:
+        return "✨ 반짝이는 것을 주웠다."
+    return random.choice(COIN_ROOM_FLAVORS)
 
 
 def room_name(room: Room):
@@ -1838,7 +1888,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
     enemy_title = (
         f"{color_icon} {enemy.color} 보스"
         if enemy.boss
-        else f"{color_icon} {enemy.color} {enemy.shape}"
+        else f"{color_icon} {enemy_display_name(enemy)}"
     )
     title = (
         f"0층 · 튜토리얼 · {enemy_title}"
@@ -2470,7 +2520,7 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
                 await enemy_defeated(
                     interaction,
                     session,
-                    f"🩸 **BLEED!** 적에게 **{small_number(damage)} 피해!**",
+                    f"🩸 **BLEED!** 적에게 **{damage} 피해!**",
                 )
                 return
 
@@ -2586,7 +2636,7 @@ async def timeout_timing(interaction, session, kind, token):
     if damage > 0:
         session.hurt_this_battle = True
     save_session_player(session, p)
-    note = f"**MISS!** 늦었다. **{small_number(damage)} 피해**."
+    note = f"**MISS!** 늦었다. **{damage} 피해**."
 
     if p.hp <= 0:
         await player_died_background(interaction, session, note)
@@ -2626,7 +2676,7 @@ async def move_player(interaction, session, direction, target):
 
     if room.kind in ("normal", "boss") and not room.cleared:
         session.phase = "battle_ready"
-        encounter_note = f"**{room.enemy.color} {room.enemy.shape}**이(가) 나타났다!"
+        encounter_note = f"**{enemy_display_name(room.enemy)}**이(가) 나타났다!"
         await interaction.response.edit_message(
             embed=combat_embed(
                 p,
@@ -2662,8 +2712,8 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                "✨ 반짝이는 것을 주웠다.",
-                footer_status=f"🪙 코인을 {small_number(amount)}개 획득했다!",
+                coin_room_flavor(),
+                footer_status=f"🪙 코인을 {amount}개 획득했다!",
             ),
             view=ExploreView(session),
         )
@@ -2688,7 +2738,7 @@ async def move_player(interaction, session, direction, target):
             embed=exploration_embed(
                 p,
                 session,
-                "항아리가 있다.",
+                pot_room_flavor(room),
             ),
             view=ExploreView(session),
         )
@@ -2717,7 +2767,7 @@ async def break_pot(interaction, session):
         p.coins += amount
         save_session_player(session, p)
         note = "🏺 항아리를 깼다! 반짝이는 것이 보인다."
-        footer_status = f"🪙 코인을 {small_number(amount)}개 얻었다!"
+        footer_status = f"🪙 코인을 {amount}개 얻었다!"
     elif roll < 0.80:
         note = "🏺 항아리를 깼다! 아무것도 없다."
         footer_status = ""
@@ -2850,9 +2900,9 @@ async def press_timing(interaction, session, kind):
             session.hurt_this_battle = True
         save_session_player(session, p)
         note = (
-            f"**MISS!** 페이크였다. **{small_number(damage)} 피해**."
+            f"**MISS!** 페이크였다. **{damage} 피해**."
             if bait
-            else f"**MISS!** 너무 빨랐다. **{small_number(damage)} 피해**."
+            else f"**MISS!** 너무 빨랐다. **{damage} 피해**."
         )
         if p.hp <= 0:
             await player_died(interaction, session, note)
@@ -2883,13 +2933,13 @@ async def press_timing(interaction, session, kind):
         if grade == "PERFECT":
             note = (
                 f"💥 **SMAAAASH!!**\n"
-                f"`{elapsed:.2f}초` — 적에게 **{small_number(damage)} 피해!**"
+                f"`{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
             )
             if enemy.hp > 0:
                 stacks = apply_bleed(enemy, p)
                 schedule_bleed(interaction, session)
         elif grade == "GOOD":
-            note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{small_number(damage)} 피해!**"
+            note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
         else:
             note = f"**MISS!** · `{elapsed:.2f}초` — 공격이 빗나갔다."
 
@@ -2918,14 +2968,14 @@ async def press_timing(interaction, session, kind):
         enemy.hp -= counter
         note = (
             f"🛡️ **PERFECT GUARD!!**\n"
-            f"`{elapsed:.2f}초` — 피해 **⁰** · 반격 **{small_number(counter)} 피해!**"
+            f"`{elapsed:.2f}초` — 피해 **0** · 반격 **{counter} 피해!**"
         )
     else:
         counter = 0
         if grade == "GOOD":
-            note = f"🛡️ **BLOCK!** · `{elapsed:.2f}초` — 받은 피해 **{small_number(damage)}**."
+            note = f"🛡️ **BLOCK!** · `{elapsed:.2f}초` — 받은 피해 **{damage}**."
         else:
-            note = f"**MISS!** · `{elapsed:.2f}초` — 받은 피해 **{small_number(damage)}**."
+            note = f"**MISS!** · `{elapsed:.2f}초` — 받은 피해 **{damage}**."
 
     if p.hp <= 0:
         await player_died(interaction, session, note)
@@ -2970,7 +3020,7 @@ async def combat_bomb(interaction, session):
 
     damage = random.randint(*BOMB_DAMAGE) + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
     enemy.hp -= damage
-    note = f"💣 **KABOOM!!** 적에게 **{small_number(damage)} 피해!**"
+    note = f"💣 **KABOOM!!** 적에게 **{damage} 피해!**"
 
     if enemy.hp <= 0:
         await enemy_defeated(interaction, session, note)
@@ -3049,9 +3099,9 @@ async def enemy_defeated(interaction, session, combat_note):
     p.bombs += bomb_gain
     save_session_player(session, p)
 
-    reward_lines = [f"🪙 코인을 {small_number(coins)}개 획득했다!"]
+    reward_lines = [f"🪙 코인을 {coins}개 획득했다!"]
     if bomb_gain:
-        reward_lines.append("💣 폭탄을 ¹개 획득했다!")
+        reward_lines.append("💣 폭탄을 1개 획득했다!")
     if enemy.boss and has_magic(p, "head", MAGIC_HEAD_BOSS_HEAL):
         before = p.hp
         p.hp = min(player_max_hp(p), p.hp + 2)
@@ -3393,7 +3443,7 @@ async def buy_magic_gear(interaction, session, index):
             p,
             session,
             f"**{gear.display_name()}** 구입 및 장착 완료.",
-            footer_status=f"🪙 코인을 {small_number(price)}개 사용했다!",
+            footer_status=f"🪙 코인을 {price}개 사용했다!",
         ),
         view=ExploreView(session),
     )
@@ -3458,9 +3508,9 @@ async def buy_bomb(interaction, session):
     save_session_player(session, p)
 
     note = (
-        "💣 폭탄 **¹개**를 구입했다."
+        "💣 폭탄 **1개**를 구입했다."
         if room.bomb_stock > 0
-        else "💣 폭탄 **¹개**를 구입했다. **SOLD OUT**"
+        else "💣 폭탄 **1개**를 구입했다. **SOLD OUT**"
     )
 
     await interaction.response.edit_message(
@@ -3501,10 +3551,10 @@ async def play_slot(interaction, session):
     elif roll < 0.68:
         gain = random.randint(2, 4) + reward_bonus
         p.coins += gain
-        footer_lines.append(f"🪙 코인을 {small_number(gain)}개 획득했다!")
+        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
     elif roll < 0.80:
         p.bombs += 1
-        footer_lines.append("💣 폭탄을 ¹개 획득했다!")
+        footer_lines.append("💣 폭탄을 1개 획득했다!")
     elif roll < 0.91:
         heal = random.randint(3, 6)
         before = p.hp
@@ -3515,7 +3565,7 @@ async def play_slot(interaction, session):
         gain = random.randint(6, 10) + reward_bonus * 2
         p.coins += gain
         note = "🎰 잭팟!"
-        footer_lines.append(f"🪙 코인을 {small_number(gain)}개 획득했다!")
+        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
 
     break_rates = [0.05, 0.10, 0.20, 0.35, 0.55, 0.75]
     break_rate = break_rates[min(room.slot_uses - 1, len(break_rates) - 1)]
@@ -3568,7 +3618,7 @@ async def bomb_slot(interaction, session):
             p,
             session,
             "💣 슬롯머신 폭파!",
-            footer_status=f"🪙 코인을 {small_number(gain)}개 획득했다!",
+            footer_status=f"🪙 코인을 {gain}개 획득했다!",
         ),
         view=SlotView(session),
     )
