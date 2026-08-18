@@ -4131,7 +4131,7 @@ class DebugView(discord.ui.View):
             ("HP -1", None, discord.ButtonStyle.secondary, 2, "hpminus"),
             ("HP +1", None, discord.ButtonStyle.secondary, 2, "hpplus"),
             ("HP 회복", "❤️", discord.ButtonStyle.secondary, 2, "hpfull"),
-            ("오늘 리셋", "↻", discord.ButtonStyle.danger, 2, "dailyreset"),
+            ("오늘 리셋", "🔄", discord.ButtonStyle.danger, 2, "dailyreset"),
         ]
         for label, emoji, style, row, action in actions:
             button = discord.ui.Button(label=label, emoji=emoji, style=style, row=row)
