@@ -4150,6 +4150,13 @@ class DebugView(discord.ui.View):
             return False
         return True
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        message = f"디버그 동작 오류: `{type(error).__name__}: {error}`"
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
     async def run_action(self, interaction: discord.Interaction, action: str):
         if interaction.guild_id is None:
             await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
@@ -4227,11 +4234,17 @@ async def debug_command(interaction: discord.Interaction):
     if not debug_allowed(interaction):
         await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
         return
-    await interaction.response.send_message(
-        embed=debug_panel_embed(interaction.guild_id, interaction.user.id),
-        view=DebugView(interaction.user.id),
-        ephemeral=True,
-    )
+    await interaction.response.defer(ephemeral=True)
+    try:
+        embed = debug_panel_embed(interaction.guild_id, interaction.user.id)
+        view = DebugView(interaction.user.id)
+        await interaction.edit_original_response(embed=embed, view=view)
+    except Exception as exc:
+        await interaction.edit_original_response(
+            content=f"디버그 패널 오류: `{type(exc).__name__}: {exc}`",
+            embed=None,
+            view=None,
+        )
 
 
 @bot.tree.command(name="게임", description="오늘의 탐색을 시작하거나 이어서 플레이합니다.")
@@ -4511,14 +4524,18 @@ async def status(interaction: discord.Interaction):
     )
 
     status_hearts = "❤️" * max(0, min(MAX_DAILY_LIVES, lives)) + "🖤" * (MAX_DAILY_LIVES - max(0, min(MAX_DAILY_LIVES, lives)))
+    def status_gear_block(slot_name: str, gear: Gear) -> str:
+        _, stats = gear.label().split(" | ", 1)
+        return f"`{slot_name}` | `{gear.display_name()}`\n{stats}"
+
     equipment_lines = [
-        f"**무기** · {p.weapon.label().replace(' | ', chr(10), 1)}",
-        f"**방패** · {p.shield.label().replace(' | ', chr(10), 1)}",
+        status_gear_block("무기", p.weapon),
+        status_gear_block("방패", p.shield),
     ]
     if p.ring is not None:
-        equipment_lines.insert(1, f"**반지** · {p.ring.label().replace(' | ', chr(10), 1)}")
+        equipment_lines.insert(1, status_gear_block("반지", p.ring))
     if p.head is not None:
-        equipment_lines.append(f"**투구** · {p.head.label().replace(' | ', chr(10), 1)}")
+        equipment_lines.append(status_gear_block("투구", p.head))
 
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
