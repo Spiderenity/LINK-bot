@@ -48,6 +48,49 @@ BLEED_MAX_STACKS = 3
 BLEED_DURATION_SECONDS = 4.0
 BLEED_TICK_SECONDS = 1.0
 BOMB_DAMAGE = (10, 14)
+MAGIC_WEAPON_CHAIN = "weapon_chain"
+MAGIC_WEAPON_HURT = "weapon_hurt"
+MAGIC_WEAPON_BLEED = "weapon_bleed"
+MAGIC_SHIELD_COUNTER = "shield_counter"
+MAGIC_SHIELD_GUARD = "shield_guard"
+MAGIC_HEAD_POT_GUARD = "head_pot_guard"
+MAGIC_HEAD_BOSS_HEAL = "head_boss_heal"
+MAGIC_RING_BLEED = "ring_bleed"
+MAGIC_RING_BOMB = "ring_bomb"
+MAGIC_NAMES = {
+    MAGIC_WEAPON_CHAIN: "제비의 세검",
+    MAGIC_WEAPON_HURT: "멧돼지의 칼",
+    MAGIC_WEAPON_BLEED: "사냥개의 단검",
+    MAGIC_SHIELD_COUNTER: "가시 방패",
+    MAGIC_SHIELD_GUARD: "검은 거울",
+    MAGIC_HEAD_POT_GUARD: "도굴꾼의 두건",
+    MAGIC_HEAD_BOSS_HEAL: "붉은 월계관",
+    MAGIC_RING_BLEED: "혈석 반지",
+    MAGIC_RING_BOMB: "화약 반지",
+}
+MAGIC_EFFECTS = {
+    MAGIC_WEAPON_CHAIN: "공격을 계속 명중시키면 위력이 오른다.",
+    MAGIC_WEAPON_HURT: "상처를 입으면 공격의 위력이 오른다.",
+    MAGIC_WEAPON_BLEED: "출혈 중인 적에게 주는 피해를 늘린다.",
+    MAGIC_SHIELD_COUNTER: "완벽한 방어의 위력을 높인다.",
+    MAGIC_SHIELD_GUARD: "때때로 공격을 흘려낸다.",
+    MAGIC_HEAD_POT_GUARD: "항아리의 위험으로부터 몸을 지킨다.",
+    MAGIC_HEAD_BOSS_HEAL: "강적을 쓰러뜨리면 생기를 얻는다.",
+    MAGIC_RING_BLEED: "출혈 피해량을 늘린다.",
+    MAGIC_RING_BOMB: "폭탄의 위력을 높인다.",
+}
+MAGIC_KINDS = {
+    MAGIC_WEAPON_CHAIN: "weapon",
+    MAGIC_WEAPON_HURT: "weapon",
+    MAGIC_WEAPON_BLEED: "weapon",
+    MAGIC_SHIELD_COUNTER: "shield",
+    MAGIC_SHIELD_GUARD: "shield",
+    MAGIC_HEAD_POT_GUARD: "head",
+    MAGIC_HEAD_BOSS_HEAL: "head",
+    MAGIC_RING_BLEED: "ring",
+    MAGIC_RING_BOMB: "ring",
+}
+MAGIC_POOL = tuple(MAGIC_KINDS)
 DEFEAT_SHAKE_FRAME_DELAY = 0.18
 DEFEAT_SHAKE_END_HOLD = 0.28
 
@@ -208,15 +251,30 @@ class Gear:
     name: str
     power: int
     affinity: Dict[str, int]
+    hp_bonus: int = 0
+    magic: Optional[str] = None
+
+    def display_name(self) -> str:
+        return MAGIC_NAMES.get(self.magic, self.name) if self.magic else self.name
 
     def label(self) -> str:
-        pips = []
         superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
-        for color in COLORS:
-            n = self.affinity.get(color, 0)
-            pips.append(f"{COLOR_MARK[color]}{str(n).translate(superscript)}")
-        icon = "⚔️" if self.kind == "weapon" else "🛡️"
-        return f"{self.name} | {icon} {self.power} · {' '.join(pips)}"
+        pips = " ".join(
+            f"{COLOR_MARK[color]}{str(self.affinity.get(color, 0)).translate(superscript)}"
+            for color in COLORS
+        )
+        if self.kind == "weapon":
+            stats = f"⚔️ {self.power} · {pips}"
+        elif self.kind == "ring":
+            stats = f"⚔️ +{self.power} · {pips}"
+        elif self.kind == "shield":
+            stats = f"🛡️ {self.power} · ❤️ +{self.hp_bonus} · {pips}"
+        else:
+            stats = f"🛡️ {self.power} · ❤️ +{self.hp_bonus} · {pips}"
+        if self.magic:
+            effect = MAGIC_EFFECTS.get(self.magic, self.magic)
+            return f"{self.display_name()} | {stats}\n✨ {effect}"
+        return f"{self.name} | {stats}"
 
     def to_json(self) -> str:
         return json.dumps(
@@ -225,6 +283,8 @@ class Gear:
                 "name": self.name,
                 "power": self.power,
                 "affinity": self.affinity,
+                "hp_bonus": self.hp_bonus,
+                "magic": self.magic,
             },
             ensure_ascii=False,
         )
@@ -232,15 +292,66 @@ class Gear:
     @staticmethod
     def from_json(raw: str) -> "Gear":
         d = json.loads(raw)
-        return Gear(d["kind"], d["name"], d["power"], d["affinity"])
+        return Gear(
+            d["kind"],
+            d["name"],
+            d["power"],
+            d["affinity"],
+            d.get("hp_bonus", 0),
+            d.get("magic"),
+        )
+
+
+def empty_affinity() -> Dict[str, int]:
+    return {color: 0 for color in COLORS}
+
+
+def split_affinity(source: Dict[str, int], points: int) -> tuple[Dict[str, int], Dict[str, int]]:
+    main = {color: max(0, int(source.get(color, 0))) for color in COLORS}
+    split = empty_affinity()
+    remaining = max(0, points)
+    while remaining > 0:
+        choices = [color for color in COLORS if main[color] > 0]
+        if not choices:
+            break
+        color = max(choices, key=lambda c: (main[c], -COLORS.index(c)))
+        main[color] -= 1
+        split[color] += 1
+        remaining -= 1
+    return main, split
+
+
+def split_legacy_weapon(old: Gear) -> tuple[Gear, Gear]:
+    ring_power = min(3, max(1, old.power // 4)) if old.power >= 2 else 0
+    total_affinity = sum(max(0, old.affinity.get(color, 0)) for color in COLORS)
+    weapon_affinity, ring_affinity = split_affinity(old.affinity, 1 if total_affinity >= 2 else 0)
+    weapon = Gear("weapon", old.name, max(1, old.power - ring_power), weapon_affinity)
+    ring = Gear("ring", f"{old.name} 조각 반지", ring_power, ring_affinity)
+    return weapon, ring
+
+
+def split_legacy_armor(old: Gear) -> tuple[Gear, Gear]:
+    head_power = min(2, max(0, old.power // 4))
+    total_affinity = sum(max(0, old.affinity.get(color, 0)) for color in COLORS)
+    shield_affinity, head_affinity = split_affinity(old.affinity, 1 if total_affinity >= 2 else 0)
+    shield = Gear("shield", old.name, max(0, old.power - head_power), shield_affinity, 0)
+    head = Gear("head", "개조 안전모", head_power, head_affinity, 0)
+    return shield, head
 
 
 START_WEAPON = Gear(
     "weapon", "유리 파편", 4, {"시안": 1, "마젠타": 0, "옐로": 0}
 )
-START_ARMOR = Gear(
-    "armor", "화물 상자 뚜껑", 1, {"시안": 0, "마젠타": 1, "옐로": 0}
+START_RING = Gear(
+    "ring", "철사 반지", 1, {"시안": 0, "마젠타": 0, "옐로": 0}
 )
+START_SHIELD = Gear(
+    "shield", "화물 상자 뚜껑", 1, {"시안": 0, "마젠타": 1, "옐로": 0}, 0
+)
+START_HEAD = Gear(
+    "head", "낡은 안전모", 0, {"시안": 0, "마젠타": 0, "옐로": 0}, 0
+)
+START_ARMOR = START_SHIELD
 
 
 @dataclass
@@ -281,7 +392,9 @@ class PlayerState:
     max_hp: int
     hp: int
     weapon: Gear
-    armor: Gear
+    ring: Optional[Gear]
+    shield: Gear
+    head: Optional[Gear]
     last_day: str
     status: str
     floor_number: int
@@ -321,6 +434,10 @@ class GameSession:
     hit_animating: bool = False
     enemy_anim_frame: int = 0
     run_failed: bool = False
+    attack_chain: int = 0
+    hurt_this_battle: bool = False
+    magic_shop_stock: list[Gear] = field(default_factory=list)
+    magic_shop_used: bool = False
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -348,6 +465,11 @@ class Database:
                     hp INTEGER NOT NULL DEFAULT 20,
                     weapon_json TEXT NOT NULL,
                     armor_json TEXT NOT NULL,
+                    shield_json TEXT,
+                    head_json TEXT,
+                    ring_json TEXT,
+                    legacy_weapon_json TEXT,
+                    equipment_version INTEGER NOT NULL DEFAULT 0,
                     last_day TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'ready',
                     floor_number INTEGER NOT NULL DEFAULT 1,
@@ -362,29 +484,68 @@ class Database:
             columns = {
                 row[1] for row in con.execute("PRAGMA table_info(players)").fetchall()
             }
-            if "floor_number" not in columns:
-                con.execute(
-                    "ALTER TABLE players ADD COLUMN floor_number INTEGER NOT NULL DEFAULT 1"
-                )
-            if "highest_floor" not in columns:
-                con.execute(
-                    "ALTER TABLE players ADD COLUMN highest_floor INTEGER NOT NULL DEFAULT 1"
-                )
+            additions = {
+                "floor_number": "INTEGER NOT NULL DEFAULT 1",
+                "highest_floor": "INTEGER NOT NULL DEFAULT 1",
+                "checkpoint_floor": "INTEGER NOT NULL DEFAULT 0",
+                "lives_used": "INTEGER NOT NULL DEFAULT 0",
+                "tutorial_completed": "INTEGER NOT NULL DEFAULT 1",
+                "shield_json": "TEXT",
+                "head_json": "TEXT",
+                "ring_json": "TEXT",
+                "legacy_weapon_json": "TEXT",
+                "equipment_version": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    con.execute(f"ALTER TABLE players ADD COLUMN {name} {definition}")
             if "checkpoint_floor" not in columns:
-                con.execute(
-                    "ALTER TABLE players ADD COLUMN checkpoint_floor INTEGER NOT NULL DEFAULT 0"
-                )
                 con.execute(
                     "UPDATE players SET checkpoint_floor = CAST((MAX(highest_floor, 1) - 1) / 5 AS INTEGER) * 5"
                 )
-            if "lives_used" not in columns:
-                con.execute(
-                    "ALTER TABLE players ADD COLUMN lives_used INTEGER NOT NULL DEFAULT 0"
+            rows = con.execute(
+                """
+                SELECT guild_id, user_id, weapon_json, armor_json,
+                       shield_json, head_json, ring_json, equipment_version, legacy_weapon_json
+                FROM players
+                WHERE equipment_version < 3
+                   OR shield_json IS NULL
+                """
+            ).fetchall()
+            for row in rows:
+                legacy_weapon = row[8] or row[2]
+                old_weapon = Gear.from_json(legacy_weapon)
+                old_armor = Gear.from_json(row[3])
+                weapon = Gear(
+                    "weapon",
+                    old_weapon.name,
+                    old_weapon.power,
+                    dict(old_weapon.affinity),
+                    old_weapon.hp_bonus,
+                    old_weapon.magic,
                 )
-            if "tutorial_completed" not in columns:
-
+                shield = Gear(
+                    "shield",
+                    old_armor.name,
+                    old_armor.power,
+                    dict(old_armor.affinity),
+                    old_armor.hp_bonus,
+                    old_armor.magic,
+                )
                 con.execute(
-                    "ALTER TABLE players ADD COLUMN tutorial_completed INTEGER NOT NULL DEFAULT 1"
+                    """
+                    UPDATE players
+                    SET weapon_json=?, shield_json=?, head_json=NULL, ring_json=NULL,
+                        legacy_weapon_json=?, equipment_version=3
+                    WHERE guild_id=? AND user_id=?
+                    """,
+                    (
+                        weapon.to_json(),
+                        shield.to_json(),
+                        legacy_weapon,
+                        row[0],
+                        row[1],
+                    ),
                 )
 
     def get_player(self, guild_id: int, user_id: int) -> PlayerState:
@@ -392,8 +553,9 @@ class Database:
             row = con.execute(
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
-                       weapon_json, armor_json, last_day, status, floor_number,
-                       highest_floor, checkpoint_floor, lives_used, tutorial_completed
+                       weapon_json, ring_json, shield_json, head_json,
+                       last_day, status, floor_number, highest_floor,
+                       checkpoint_floor, lives_used, tutorial_completed
                 FROM players
                 WHERE guild_id=? AND user_id=?
                 """,
@@ -405,15 +567,18 @@ class Database:
                     """
                     INSERT INTO players
                     (guild_id, user_id, coins, bombs, max_hp, hp,
-                     weapon_json, armor_json, last_day, status, floor_number,
-                     highest_floor, checkpoint_floor, lives_used, tutorial_completed)
-                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, '', 'ready', 1, 1, 0, 0, 0)
+                     weapon_json, armor_json, shield_json, head_json, ring_json,
+                     legacy_weapon_json, equipment_version, last_day, status,
+                     floor_number, highest_floor, checkpoint_floor, lives_used, tutorial_completed)
+                    VALUES (?, ?, 3, 2, 20, 20, ?, ?, ?, NULL, NULL, ?, 3, '', 'ready', 1, 1, 0, 0, 0)
                     """,
                     (
                         guild_id,
                         user_id,
                         START_WEAPON.to_json(),
-                        START_ARMOR.to_json(),
+                        START_SHIELD.to_json(),
+                        START_SHIELD.to_json(),
+                        START_WEAPON.to_json(),
                     ),
                 )
                 con.commit()
@@ -427,14 +592,16 @@ class Database:
             max_hp=row[4],
             hp=row[5],
             weapon=Gear.from_json(row[6]),
-            armor=Gear.from_json(row[7]),
-            last_day=row[8],
-            status=row[9],
-            floor_number=row[10],
-            highest_floor=row[11],
-            checkpoint_floor=row[12],
-            lives_used=row[13],
-            tutorial_completed=bool(row[14]),
+            ring=Gear.from_json(row[7]) if row[7] else None,
+            shield=Gear.from_json(row[8]),
+            head=Gear.from_json(row[9]) if row[9] else None,
+            last_day=row[10],
+            status=row[11],
+            floor_number=row[12],
+            highest_floor=row[13],
+            checkpoint_floor=row[14],
+            lives_used=row[15],
+            tutorial_completed=bool(row[16]),
         )
 
     def save_player(self, p: PlayerState):
@@ -443,9 +610,10 @@ class Database:
                 """
                 UPDATE players
                 SET coins=?, bombs=?, max_hp=?, hp=?,
-                    weapon_json=?, armor_json=?, last_day=?, status=?,
-                    floor_number=?, highest_floor=?, checkpoint_floor=?, lives_used=?,
-                    tutorial_completed=?
+                    weapon_json=?, ring_json=?, shield_json=?, head_json=?,
+                    last_day=?, status=?, floor_number=?, highest_floor=?,
+                    checkpoint_floor=?, lives_used=?, tutorial_completed=?,
+                    equipment_version=3
                 WHERE guild_id=? AND user_id=?
                 """,
                 (
@@ -454,7 +622,9 @@ class Database:
                     p.max_hp,
                     p.hp,
                     p.weapon.to_json(),
-                    p.armor.to_json(),
+                    p.ring.to_json() if p.ring else None,
+                    p.shield.to_json(),
+                    p.head.to_json() if p.head else None,
                     p.last_day,
                     p.status,
                     p.floor_number,
@@ -486,8 +656,9 @@ class Database:
             rows = con.execute(
                 """
                 SELECT guild_id, user_id, coins, bombs, max_hp, hp,
-                       weapon_json, armor_json, last_day, status, floor_number,
-                       highest_floor, checkpoint_floor, lives_used, tutorial_completed
+                       weapon_json, ring_json, shield_json, head_json,
+                       last_day, status, floor_number, highest_floor,
+                       checkpoint_floor, lives_used, tutorial_completed
                 FROM players
                 WHERE guild_id=?
                 ORDER BY floor_number DESC, coins DESC, user_id ASC
@@ -504,21 +675,23 @@ class Database:
                 max_hp=row[4],
                 hp=row[5],
                 weapon=Gear.from_json(row[6]),
-                armor=Gear.from_json(row[7]),
-                last_day=row[8],
-                status=row[9],
-                floor_number=row[10],
-                highest_floor=row[11],
-                checkpoint_floor=row[12],
-                lives_used=row[13],
-                tutorial_completed=bool(row[14]),
+                ring=Gear.from_json(row[7]) if row[7] else None,
+                shield=Gear.from_json(row[8]),
+                head=Gear.from_json(row[9]) if row[9] else None,
+                last_day=row[10],
+                status=row[11],
+                floor_number=row[12],
+                highest_floor=row[13],
+                checkpoint_floor=row[14],
+                lives_used=row[15],
+                tutorial_completed=bool(row[16]),
             )
             for row in rows
         ]
 
     def test_reset(self, guild_id: int, user_id: int):
         p = self.get_player(guild_id, user_id)
-        p.hp = p.max_hp
+        p.hp = player_max_hp(p)
         p.last_day = ""
         p.status = "ready"
         p.floor_number = max(1, p.checkpoint_floor + 1)
@@ -558,6 +731,77 @@ def checkpoint_start_floor(player: PlayerState) -> int:
     return max(1, player.checkpoint_floor + 1)
 
 
+def player_max_hp(player: PlayerState) -> int:
+    shield_hp = player.shield.hp_bonus if player.shield else 0
+    head_hp = player.head.hp_bonus if player.head else 0
+    return max(1, player.max_hp + shield_hp + head_hp)
+
+
+def attack_power(player: PlayerState) -> int:
+    ring_power = player.ring.power if player.ring else 0
+    return max(0, player.weapon.power + ring_power)
+
+
+def defense_power(player: PlayerState) -> int:
+    head_power = player.head.power if player.head else 0
+    return max(0, player.shield.power + head_power)
+
+
+def attack_affinity(player: PlayerState, color: str) -> int:
+    return affinity(player.weapon, color) + affinity(player.ring, color)
+
+
+def defense_affinity(player: PlayerState, color: str) -> int:
+    return affinity(player.shield, color) + affinity(player.head, color)
+
+
+def has_magic(player: PlayerState, kind: str, effect: str) -> bool:
+    gear = {
+        "weapon": player.weapon,
+        "ring": player.ring,
+        "shield": player.shield,
+        "head": player.head,
+    }[kind]
+    return gear is not None and gear.magic == effect
+
+
+def equipped_gear(player: PlayerState, kind: str) -> Optional[Gear]:
+    return {
+        "weapon": player.weapon,
+        "ring": player.ring,
+        "shield": player.shield,
+        "head": player.head,
+    }[kind]
+
+
+def equipped_gear_label(player: PlayerState, kind: str) -> str:
+    gear = equipped_gear(player, kind)
+    return gear.label() if gear else "`없음`"
+
+
+def equip_gear(player: PlayerState, gear: Gear):
+    if gear.kind == "weapon":
+        player.weapon = gear
+    elif gear.kind == "ring":
+        player.ring = gear
+    elif gear.kind == "shield":
+        player.shield = gear
+    elif gear.kind == "head":
+        player.head = gear
+    else:
+        raise ValueError(f"알 수 없는 장비 종류: {gear.kind}")
+    player.hp = min(player.hp, player_max_hp(player))
+
+
+def gear_slot_name(kind: str) -> str:
+    return {
+        "weapon": "무기",
+        "ring": "반지",
+        "shield": "방패",
+        "head": "투구",
+    }[kind]
+
+
 def today_key() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
 
@@ -578,50 +822,126 @@ def random_affinity(min_points=1, max_points=3):
 
 def gear_price(gear: Gear, floor_number: int) -> int:
     floor_bonus = max(0, floor_number - 1)
-    if gear.kind == "weapon":
-        return 18 + floor_bonus * 4
-    return 15 + floor_bonus * 3
+    base = {"weapon": 18, "ring": 14, "shield": 15, "head": 13}[gear.kind]
+    scale = {"weapon": 4, "ring": 3, "shield": 3, "head": 3}[gear.kind]
+    return base + floor_bonus * scale
 
 
 def bomb_price(floor_number: int) -> int:
     return 8 + max(0, floor_number - 1) * 2
 
 
+def normal_gear_kinds(floor_number: int) -> tuple[str, ...]:
+    if floor_number < 6:
+        return ("weapon", "shield")
+    return ("weapon", "ring", "shield", "head")
+
+
+def magic_pool_for_floor(floor_number: int) -> tuple[str, ...]:
+    if floor_number < 10:
+        return tuple(
+            effect
+            for effect in MAGIC_POOL
+            if MAGIC_KINDS[effect] in ("weapon", "shield")
+        )
+    return MAGIC_POOL
+
+
+def gear_affinity_range(kind: str, boss_drop: bool, floor_number: int) -> tuple[int, int]:
+    growth = min(3, max(0, floor_number - 1) // 5)
+    base = {
+        "weapon": ((1, 2), (2, 3)),
+        "ring": ((0, 1), (1, 2)),
+        "shield": ((1, 2), (2, 3)),
+        "head": ((0, 1), (1, 2)),
+    }[kind][1 if boss_drop else 0]
+    low = min(6, base[0] + growth)
+    high = min(6, base[1] + growth)
+    return low, max(low, high)
+
+
+def gear_hp_range(kind: str, floor_number: int) -> tuple[int, int]:
+    if floor_number >= 10:
+        return (1, 4) if kind == "shield" else (2, 4)
+    if floor_number >= 5:
+        return (0, 3) if kind == "shield" else (1, 3)
+    return (0, 2)
+
+
 def generate_gear(kind: str, boss_drop=False, floor_number: int = 1) -> Gear:
+    if kind == "armor":
+        kind = "shield"
     floor_bonus = max(0, floor_number - 1)
 
     if kind == "weapon":
-        names = [
-            "유리 파편",
-            "금속 파이프",
-            "깨진 칼날",
-            "고장 난 절단기",
-            "비상 신호총",
-        ]
-        low = 6 if boss_drop else 5
-        high = 9 if boss_drop else 7
+        names = ["유리 파편", "금속 파이프", "깨진 칼날", "고장 난 절단기", "비상 신호총"]
+        low, high = ((5, 8) if boss_drop else (4, 6))
         power = random.randint(low, high) + floor_bonus
-    else:
-        names = [
-            "화물 상자 뚜껑",
-            "기계 덮개",
-            "깨진 방탄유리",
-            "비상문 조각",
-            "금 간 방패",
-        ]
-        low = 2 if boss_drop else 1
-        high = 4 if boss_drop else 3
+        hp_bonus = 0
+    elif kind == "ring":
+        names = ["철사 반지", "녹슨 반지", "구리 반지", "볼트 반지", "얇은 합금 반지"]
+        low, high = ((2, 3) if boss_drop else (1, 3))
+        power = random.randint(low, high)
+        hp_bonus = 0
+    elif kind == "shield":
+        names = ["화물 상자 뚜껑", "기계 덮개", "깨진 방탄유리", "비상문 조각", "금 간 방패"]
+        low, high = ((2, 4) if boss_drop else (1, 3))
         power = random.randint(low, high) + floor_bonus // 2
+        hp_bonus = random.randint(*gear_hp_range("shield", floor_number))
+    elif kind == "head":
+        names = ["낡은 안전모", "깨진 바이저", "작업용 헬멧", "안전모", "두꺼운 후드"]
+        low, high = ((1, 2) if boss_drop else (0, 2))
+        power = random.randint(low, high) + floor_bonus // 4
+        hp_bonus = random.randint(*gear_hp_range("head", floor_number))
+    else:
+        raise ValueError(f"알 수 없는 장비 종류: {kind}")
 
-    affinity_bonus = min(2, floor_bonus // 2)
+    affinity_points = gear_affinity_range(kind, boss_drop, floor_number)
     return Gear(
         kind=kind,
         name=random.choice(names),
         power=power,
-        affinity=random_affinity(
-            (2 if boss_drop else 1) + affinity_bonus,
-            (4 if boss_drop else 3) + affinity_bonus,
-        ),
+        affinity=random_affinity(*affinity_points),
+        hp_bonus=hp_bonus,
+        magic=None,
+    )
+
+
+def generate_magic_gear(effect: str, floor_number: int) -> Gear:
+    kind = MAGIC_KINDS[effect]
+    gear = generate_gear(kind, boss_drop=True, floor_number=floor_number)
+    gear.name = MAGIC_NAMES[effect]
+    gear.magic = effect
+    return gear
+
+
+def magic_price(gear: Gear, floor_number: int) -> int:
+    return gear_price(gear, floor_number) + 15 + floor_number * 2
+
+
+def prepare_magic_shop(session: GameSession):
+    if (
+        session.is_tutorial
+        or session.floor_number % 5 != 0
+        or not session.boss_defeated
+        or session.magic_shop_used
+        or session.magic_shop_stock
+    ):
+        return
+    effects = random.sample(magic_pool_for_floor(session.floor_number), 3)
+    session.magic_shop_stock = [
+        generate_magic_gear(effect, session.floor_number) for effect in effects
+    ]
+
+
+def magic_shop_available(session: GameSession) -> bool:
+    return (
+        not session.is_tutorial
+        and session.floor_number % 5 == 0
+        and session.boss_defeated
+        and session.current == session.boss_pos
+        and not session.magic_shop_used
+        and bool(session.magic_shop_stock)
     )
 
 
@@ -708,9 +1028,10 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
 
     secret = Room(secret_pos, secret_kind)
     if secret_kind == "shop":
+        shop_kinds = random.sample(normal_gear_kinds(floor_number), 2)
         secret.shop_stock = [
-            generate_gear("weapon", floor_number=floor_number),
-            generate_gear("armor", floor_number=floor_number),
+            generate_gear(kind, floor_number=floor_number)
+            for kind in shop_kinds
         ]
         secret.bomb_stock = random.randint(1, 3)
 
@@ -740,7 +1061,9 @@ def make_tutorial_player(guild_id: int, user_id: int) -> PlayerState:
         max_hp=20,
         hp=20,
         weapon=Gear.from_json(START_WEAPON.to_json()),
-        armor=Gear.from_json(START_ARMOR.to_json()),
+        ring=None,
+        shield=Gear.from_json(START_SHIELD.to_json()),
+        head=None,
         last_day="",
         status="tutorial",
         floor_number=0,
@@ -774,7 +1097,7 @@ def generate_tutorial(guild_id: int, user_id: int, *, replay: bool) -> GameSessi
     secret = Room(secret_pos, "shop")
     secret.shop_stock = [
         generate_gear("weapon", floor_number=1),
-        generate_gear("armor", floor_number=1),
+        generate_gear("shield", floor_number=1),
     ]
     secret.bomb_stock = 2
     rooms[secret_pos] = secret
@@ -887,8 +1210,11 @@ def colored_enemy_art(enemy: Enemy, art: Optional[str] = None) -> str:
     return f"```ansi\n\u001b[{code}m{art}\u001b[0m\n```"
 
 
-def apply_bleed(enemy: Enemy) -> int:
-    enemy.bleed_stacks = min(BLEED_MAX_STACKS, enemy.bleed_stacks + 1)
+def apply_bleed(enemy: Enemy, player: Optional[PlayerState] = None) -> int:
+    magic_bleed = player is not None and has_magic(player, "ring", MAGIC_RING_BLEED)
+    cap = BLEED_MAX_STACKS + (1 if magic_bleed else 0)
+    gain = 2 if magic_bleed and enemy.bleed_stacks == 0 else 1
+    enemy.bleed_stacks = min(cap, enemy.bleed_stacks + gain)
     enemy.bleed_expires_at = time.monotonic() + BLEED_DURATION_SECONDS
     return enemy.bleed_stacks
 
@@ -898,19 +1224,32 @@ def clear_bleed(enemy: Enemy):
     enemy.bleed_expires_at = 0.0
 
 
-def affinity(gear: Gear, color: str) -> int:
-    return gear.affinity.get(color, 0)
+def affinity(gear: Optional[Gear], color: str) -> int:
+    return gear.affinity.get(color, 0) if gear else 0
 
 
 def attack_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
     if grade == "MISS":
         return 0
     timing_mult = {"PERFECT": 1.40, "GOOD": 1.0}[grade]
-    color_mult = 1.0 + 0.25 * affinity(player.weapon, enemy.color)
-    return max(1, round(player.weapon.power * timing_mult * color_mult))
+    color_mult = 1.0 + 0.25 * attack_affinity(player, enemy.color)
+    return max(1, round(attack_power(player) * timing_mult * color_mult))
 
 
-def incoming_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
+def weapon_magic_damage_bonus(player: PlayerState, enemy: Enemy, session: GameSession, grade: str) -> int:
+    if grade == "MISS":
+        return 0
+    effect = player.weapon.magic
+    if effect == MAGIC_WEAPON_CHAIN:
+        return 1 if session.attack_chain + 1 >= 3 else 0
+    if effect == MAGIC_WEAPON_HURT:
+        return 1 if session.hurt_this_battle else 0
+    if effect == MAGIC_WEAPON_BLEED:
+        return 1 if enemy.bleed_stacks > 0 and bleed_seconds_left(enemy) > 0 else 0
+    return 0
+
+
+def incoming_damage(player: PlayerState, enemy: Enemy, grade: str, magic_roll=True) -> int:
     if grade == "PERFECT" or enemy.damage <= 0:
         return 0
 
@@ -918,11 +1257,18 @@ def incoming_damage(player: PlayerState, enemy: Enemy, grade: str) -> int:
     if grade == "GOOD":
         damage = max(1, round(damage * 0.45))
 
-    damage = max(0, damage - player.armor.power)
-    resistance = max(0.35, 1.0 - 0.15 * affinity(player.armor, enemy.color))
+    damage = max(0, damage - defense_power(player))
+    resistance = max(0.35, 1.0 - 0.15 * defense_affinity(player, enemy.color))
     result = max(0, round(damage * resistance))
     if grade == "MISS":
-        return max(1, result)
+        result = max(1, result)
+    if (
+        result > 0
+        and magic_roll
+        and has_magic(player, "shield", MAGIC_SHIELD_GUARD)
+        and random.random() < 0.10
+    ):
+        result = max(1, result - 2)
     return result
 
 
@@ -931,7 +1277,7 @@ def enemy_should_flee(player: PlayerState, enemy: Enemy) -> bool:
         return False
     return (
         attack_damage(player, enemy, "GOOD") >= enemy.max_hp
-        and incoming_damage(player, enemy, "MISS") <= 1
+        and incoming_damage(player, enemy, "MISS", magic_roll=False) <= 1
     )
 
 
@@ -964,7 +1310,7 @@ def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
         )
         return perfect, good
 
-    extra = 0.05 * affinity(player.armor, enemy.color)
+    extra = 0.05 * defense_affinity(player, enemy.color)
     good = spec["defend_good"] + extra
     perfect = min(good, spec["defend_perfect"] + PERFECT_WINDOW_BONUS + extra)
     return perfect, good
@@ -991,15 +1337,27 @@ def room_name(room: Room):
     }[room.kind]
 
 
+def secret_edge(session: GameSession, source, target) -> bool:
+    return (
+        (source == session.secret_from and target == session.secret_pos)
+        or (source == session.secret_pos and target == session.secret_from)
+    )
+
+
+def can_move_between(session: GameSession, source, target) -> bool:
+    if target not in session.rooms:
+        return False
+    if source == session.secret_pos or target == session.secret_pos:
+        return session.secret_revealed and secret_edge(session, source, target)
+    return True
+
+
 def accessible_directions(session: GameSession):
     result = []
     for name, delta in DIRECTIONS.items():
         target = add_pos(session.current, delta)
-        if target not in session.rooms:
-            continue
-        if target == session.secret_pos and not session.secret_revealed:
-            continue
-        result.append((name, target))
+        if can_move_between(session, session.current, target):
+            result.append((name, target))
     return result
 
 
@@ -1052,12 +1410,12 @@ def map_ascii(session: GameSession):
         east = add_pos(pos, DIRECTIONS["오른쪽"])
         south = add_pos(pos, DIRECTIONS["아래"])
 
-        if east in visible:
+        if east in visible and can_move_between(session, pos, east):
             ex, _ = cv(east)
             for xx in range(x + 1, ex):
                 canvas[y][xx] = "─"
 
-        if south in visible:
+        if south in visible and can_move_between(session, pos, south):
             _, sy = cv(south)
             canvas[y + 1][x] = "│"
 
@@ -1072,10 +1430,18 @@ def gear_affinity_line(gear: Gear) -> str:
     )
 
 
+def combined_affinity_line(player: PlayerState, offensive: bool) -> str:
+    superscript = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+    return " ".join(
+        f"{COLOR_MARK[color]}{str((attack_affinity if offensive else defense_affinity)(player, color)).translate(superscript)}"
+        for color in COLORS
+    )
+
+
 def combat_stat_lines(player: PlayerState) -> str:
     return (
-        f"⚔️ `{player.weapon.power}` · {gear_affinity_line(player.weapon)}\n"
-        f"🛡️ `{player.armor.power}` · {gear_affinity_line(player.armor)}"
+        f"⚔️ `{attack_power(player)}` · {combined_affinity_line(player, True)}\n"
+        f"🛡️ `{defense_power(player)}` · {combined_affinity_line(player, False)}"
     )
 
 
@@ -1091,7 +1457,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
     )
 
     value = (
-        f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+        f"{hp_bar(player.hp, player_max_hp(player))} `{player.hp}/{player_max_hp(player)}`\n"
         f"{combat_stat_lines(player)}"
     )
     if show_resources:
@@ -1117,13 +1483,7 @@ def exploration_embed(player, session, note="", footer_status=""):
     around = []
     for direction in ("왼쪽", "위", "아래", "오른쪽"):
         target = add_pos(session.current, DIRECTIONS[direction])
-        can_move = (
-            target in session.rooms
-            and not (
-                target == session.secret_pos
-                and not session.secret_revealed
-            )
-        )
+        can_move = can_move_between(session, session.current, target)
         if can_move:
             around.append(f"{DIR_EMOJI[direction]} 문")
 
@@ -1148,7 +1508,7 @@ def exploration_embed(player, session, note="", footer_status=""):
         parts.append(note)
     parts.append(
         f"**내 HP**\n"
-        f"{hp_bar(player.hp, player.max_hp)} `{player.hp}/{player.max_hp}`\n"
+        f"{hp_bar(player.hp, player_max_hp(player))} `{player.hp}/{player_max_hp(player)}`\n"
         f"{resources}"
     )
     parts.append(
@@ -1229,8 +1589,8 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
     embed.add_field(
         name="내 HP",
         value=(
-            f"{hp_bar(player.hp, player.max_hp)} "
-            f"`{player.hp}/{player.max_hp}`\n"
+            f"{hp_bar(player.hp, player_max_hp(player))} "
+            f"`{player.hp}/{player_max_hp(player)}`\n"
             f"{combat_stat_lines(player)}\n"
             f"💣 `{player.bombs}`"
         ),
@@ -1388,13 +1748,7 @@ class ExploreView(OwnerView):
 
         for direction in ("왼쪽", "위", "아래", "오른쪽"):
             target = add_pos(session.current, DIRECTIONS[direction])
-            can_move = (
-                target in session.rooms
-                and not (
-                    target == session.secret_pos
-                    and not session.secret_revealed
-                )
-            )
+            can_move = can_move_between(session, session.current, target)
 
             btn = discord.ui.Button(
                 emoji=DIR_EMOJI[direction],
@@ -1435,6 +1789,19 @@ class ExploreView(OwnerView):
 
             btn.callback = pot_callback
             self.add_item(btn)
+
+        if magic_shop_available(session):
+            magic_shop = discord.ui.Button(
+                label="마법 상점",
+                emoji="🔮",
+                style=discord.ButtonStyle.secondary,
+            )
+
+            async def magic_shop_callback(interaction):
+                await open_magic_shop(interaction, self.session)
+
+            magic_shop.callback = magic_shop_callback
+            self.add_item(magic_shop)
 
         if session.boss_defeated and session.current == session.boss_pos:
             if session.is_tutorial and session.tutorial_replay:
@@ -1557,15 +1924,12 @@ class LootView(OwnerView):
 
         async def equip_callback(interaction):
             p = session_player(session)
-            if gear.kind == "weapon":
-                p.weapon = gear
-            else:
-                p.armor = gear
+            equip_gear(p, gear)
             save_session_player(session, p)
             await show_after_clear(
                 interaction,
                 session,
-                f"{gear.name} 장착 완료.",
+                f"{gear.display_name()} 장착 완료.",
             )
 
         async def skip_callback(interaction):
@@ -1579,6 +1943,42 @@ class LootView(OwnerView):
         skip.callback = skip_callback
         self.add_item(equip)
         self.add_item(skip)
+
+
+class MagicShopView(OwnerView):
+    def __init__(self, session):
+        super().__init__(session)
+        p = session_player(session)
+
+        for index, gear in enumerate(session.magic_shop_stock[:3]):
+            price = magic_price(gear, session.floor_number)
+            btn = discord.ui.Button(
+                label=f"{index + 1}번 ({price})",
+                style=discord.ButtonStyle.success,
+                disabled=session.magic_shop_used or p.coins < price,
+            )
+
+            async def callback(interaction, idx=index):
+                await buy_magic_gear(interaction, self.session, idx)
+
+            btn.callback = callback
+            self.add_item(btn)
+
+        leave = discord.ui.Button(
+            label="나가기",
+            emoji="↩️",
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def leave_callback(interaction):
+            p2 = session_player(session)
+            await interaction.response.edit_message(
+                embed=exploration_embed(p2, session),
+                view=ExploreView(session),
+            )
+
+        leave.callback = leave_callback
+        self.add_item(leave)
 
 
 class ShopView(OwnerView):
@@ -1856,6 +2256,7 @@ async def timeout_timing(interaction, session, kind, token):
         return
 
     if kind == "attack":
+        session.attack_chain = 0
         note = "**MISS!** 늦었다."
         session.phase = "defend"
         await interaction.edit_original_response(
@@ -1867,6 +2268,8 @@ async def timeout_timing(interaction, session, kind, token):
 
     damage = incoming_damage(p, enemy, "MISS")
     p.hp = max(0, p.hp - damage)
+    if damage > 0:
+        session.hurt_this_battle = True
     save_session_player(session, p)
     note = f"**MISS!** 늦었다. **{damage} 피해**."
 
@@ -1883,6 +2286,9 @@ async def timeout_timing(interaction, session, kind, token):
 
 
 async def move_player(interaction, session, direction, target):
+    if not can_move_between(session, session.current, target):
+        await interaction.response.defer()
+        return
     if session.ended:
         await interaction.response.defer()
         return
@@ -2002,6 +2408,8 @@ async def break_pot(interaction, session):
         footer_status = ""
     else:
         damage = random.randint(1, 3)
+        if has_magic(p, "head", MAGIC_HEAD_POT_GUARD):
+            damage = max(0, damage - 2)
         p.hp = max(0, p.hp - damage)
         save_session_player(session, p)
         note = "🏺 항아리를 깼다!"
@@ -2075,6 +2483,8 @@ async def start_battle(interaction, session):
 
     session.phase = "attack"
     session.enemy_anim_frame = 0
+    session.attack_chain = 0
+    session.hurt_this_battle = False
     await interaction.response.edit_message(
         embed=combat_embed(
             p,
@@ -2105,6 +2515,7 @@ async def press_timing(interaction, session, kind):
         bait = state == "fake"
 
         if kind == "attack":
+            session.attack_chain = 0
             note = (
                 "**MISS!** 페이크였다."
                 if bait
@@ -2120,6 +2531,8 @@ async def press_timing(interaction, session, kind):
 
         damage = incoming_damage(p, enemy, "MISS")
         p.hp = max(0, p.hp - damage)
+        if damage > 0:
+            session.hurt_this_battle = True
         save_session_player(session, p)
         note = (
             f"**MISS!** 페이크였다. **{damage} 피해**."
@@ -2145,6 +2558,11 @@ async def press_timing(interaction, session, kind):
 
     if kind == "attack":
         damage = attack_damage(p, enemy, grade)
+        damage += weapon_magic_damage_bonus(p, enemy, session, grade)
+        if grade == "MISS":
+            session.attack_chain = 0
+        else:
+            session.attack_chain += 1
         enemy.hp -= damage
 
         if grade == "PERFECT":
@@ -2153,7 +2571,7 @@ async def press_timing(interaction, session, kind):
                 f"`{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
             )
             if enemy.hp > 0:
-                stacks = apply_bleed(enemy)
+                stacks = apply_bleed(enemy, p)
                 schedule_bleed(interaction, session)
         elif grade == "GOOD":
             note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
@@ -2176,10 +2594,12 @@ async def press_timing(interaction, session, kind):
 
     damage = incoming_damage(p, enemy, grade)
     p.hp = max(0, p.hp - damage)
+    if damage > 0:
+        session.hurt_this_battle = True
     save_session_player(session, p)
 
     if grade == "PERFECT":
-        counter = PERFECT_COUNTER_DAMAGE
+        counter = PERFECT_COUNTER_DAMAGE + (1 if has_magic(p, "shield", MAGIC_SHIELD_COUNTER) else 0)
         enemy.hp -= counter
         note = (
             f"🛡️ **PERFECT GUARD!!**\n"
@@ -2233,7 +2653,7 @@ async def combat_bomb(interaction, session):
     p.bombs -= 1
     save_session_player(session, p)
 
-    damage = random.randint(*BOMB_DAMAGE)
+    damage = random.randint(*BOMB_DAMAGE) + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
     enemy.hp -= damage
     note = f"💣 **KABOOM!!** 적에게 **{damage} 피해!**"
 
@@ -2317,6 +2737,13 @@ async def enemy_defeated(interaction, session, combat_note):
     reward_lines = [f"🪙 코인을 {coins}개 획득했다!"]
     if bomb_gain:
         reward_lines.append("💣 폭탄을 1개 획득했다!")
+    if enemy.boss and has_magic(p, "head", MAGIC_HEAD_BOSS_HEAL):
+        before = p.hp
+        p.hp = min(player_max_hp(p), p.hp + 2)
+        healed = p.hp - before
+        if healed > 0:
+            reward_lines.append(f"❤️ HP가 {healed} 회복됐다!")
+        save_session_player(session, p)
     reward_status = "\n".join(reward_lines)
 
     if enemy.boss:
@@ -2324,10 +2751,11 @@ async def enemy_defeated(interaction, session, combat_note):
         if session.floor_number % 5 == 0 and not session.is_tutorial:
             p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
             save_session_player(session, p)
+            prepare_magic_shop(session)
 
     if enemy.boss or random.random() < 0.30:
         gear = generate_gear(
-            random.choice(("weapon", "armor")),
+            random.choice(normal_gear_kinds(session.floor_number)),
             boss_drop=enemy.boss,
             floor_number=session.floor_number,
         )
@@ -2340,10 +2768,10 @@ async def enemy_defeated(interaction, session, combat_note):
         )
         embed.description = combat_note
         embed.set_footer(text=reward_status)
-        current = p.weapon if gear.kind == "weapon" else p.armor
-        item_name = "무기" if gear.kind == "weapon" else "방패"
+        current = equipped_gear(p, gear.kind)
+        item_name = gear_slot_name(gear.kind)
         embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
-        embed.add_field(name=f"현재 {item_name}", value=current.label(), inline=False)
+        embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "`없음`", inline=False)
 
         await edit_interaction_message(
             interaction,
@@ -2381,7 +2809,7 @@ def death_description(player: PlayerState, note: str) -> str:
             note
             + "\n\n**눈앞이 캄캄해졌다!**"
             + "\n오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!"
-            + "\n무기·방패·코인·폭탄은 그대로 유지된다."
+            + "\n무기·반지·방패·투구·코인·폭탄은 그대로 유지된다."
             + "\n플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다."
         )
     return (
@@ -2499,7 +2927,7 @@ async def climb_next_floor(interaction, session):
         today = today_key()
         if p.last_day != today:
             p.lives_used = 0
-        p.hp = p.max_hp
+        p.hp = player_max_hp(p)
         p.last_day = today
         p.status = "playing"
         p.floor_number = 1
@@ -2591,6 +3019,76 @@ async def climb_next_floor(interaction, session):
     )
 
 
+def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{session.floor_number}층 · 마법 상점",
+        description=note or "🔮 보스 방 한쪽에서 이상한 상인이 기다리고 있다.\n**한 가지만 살 수 있다.**",
+    )
+    for index, gear in enumerate(session.magic_shop_stock[:3], 1):
+        price = magic_price(gear, session.floor_number)
+        current = equipped_gear(player, gear.kind)
+        embed.add_field(
+            name=f"{index}번 · 🪙 {price}",
+            value=(
+                f"{gear.label()}\n"
+                f"현재 {gear_slot_name(gear.kind)}: {current.label() if current else '없음'}"
+            ),
+            inline=False,
+        )
+    embed.set_footer(text=f"🪙 현재 코인 {player.coins}")
+    return embed
+
+
+async def open_magic_shop(interaction, session):
+    prepare_magic_shop(session)
+    p = session_player(session)
+    if not magic_shop_available(session):
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "상인은 이미 자리를 떠났다."),
+            view=ExploreView(session),
+        )
+        return
+    await interaction.response.edit_message(
+        embed=magic_shop_embed(p, session),
+        view=MagicShopView(session),
+    )
+
+
+async def buy_magic_gear(interaction, session, index):
+    p = session_player(session)
+    if session.magic_shop_used or index >= len(session.magic_shop_stock):
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "상인은 더 이상 거래하지 않는다."),
+            view=ExploreView(session),
+        )
+        return
+
+    gear = session.magic_shop_stock[index]
+    price = magic_price(gear, session.floor_number)
+    if p.coins < price:
+        await interaction.response.edit_message(
+            embed=magic_shop_embed(p, session, "코인이 부족하다."),
+            view=MagicShopView(session),
+        )
+        return
+
+    p.coins -= price
+    equip_gear(p, gear)
+    save_session_player(session, p)
+    session.magic_shop_used = True
+    session.magic_shop_stock.clear()
+
+    await interaction.response.edit_message(
+        embed=exploration_embed(
+            p,
+            session,
+            f"**{gear.display_name()}** 구입 및 장착 완료.",
+            footer_status=f"🪙 코인을 {price}개 사용했다!",
+        ),
+        view=ExploreView(session),
+    )
+
+
 async def buy_gear(interaction, session, index, price):
     room = session.room()
     p = session_player(session)
@@ -2612,18 +3110,14 @@ async def buy_gear(interaction, session, index, price):
     gear = room.shop_stock.pop(index)
     p.coins -= price
 
-    if gear.kind == "weapon":
-        p.weapon = gear
-    else:
-        p.armor = gear
-
+    equip_gear(p, gear)
     save_session_player(session, p)
 
     await interaction.response.edit_message(
         embed=shop_embed(
             p,
             session,
-            f"**{gear.name}** 구입 및 장착 완료.",
+            f"**{gear.display_name()}** 구입 및 장착 완료.",
         ),
         view=ShopView(session),
     )
@@ -2704,7 +3198,7 @@ async def play_slot(interaction, session):
     elif roll < 0.91:
         heal = random.randint(3, 6)
         before = p.hp
-        p.hp = min(p.max_hp, p.hp + heal)
+        p.hp = min(player_max_hp(p), p.hp + heal)
         restored = p.hp - before
         footer_lines.append(f"❤️ HP가 {restored} 회복됐다!")
     else:
@@ -2778,9 +3272,15 @@ SHEET_HEADERS = [
     "남은 목숨",
     "코인",
     "무기",
-    "공격력",
+    "무기 공격",
+    "반지",
+    "반지 공격",
     "방패",
-    "방어력",
+    "방패 방어",
+    "방패 HP",
+    "투구",
+    "투구 방어",
+    "투구 HP",
     "폭탄",
     "HP",
     "상태",
@@ -2954,7 +3454,7 @@ async def game(interaction: discord.Interaction):
             cancel_cue(old)
             old.ended = True
 
-        p.hp = p.max_hp
+        p.hp = player_max_hp(p)
         p.last_day = today
         p.status = "playing"
         p.floor_number = checkpoint_start_floor(p)
@@ -2985,7 +3485,7 @@ async def game(interaction: discord.Interaction):
         if p.lives_used >= MAX_DAILY_LIVES:
             await interaction.response.send_message(
                 "오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!\n"
-                "무기·방패·코인·폭탄은 그대로 유지된다.\n"
+                "무기·반지·방패·투구·코인·폭탄은 그대로 유지된다.\n"
                 "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
                 ephemeral=True,
             )
@@ -2996,7 +3496,7 @@ async def game(interaction: discord.Interaction):
             cancel_cue(old)
             old.ended = True
 
-        p.hp = p.max_hp
+        p.hp = player_max_hp(p)
         p.status = "playing"
         p.floor_number = checkpoint_start_floor(p)
         db.save_player(p)
@@ -3136,7 +3636,7 @@ async def status(interaction: discord.Interaction):
     embed.add_field(
         name=f"내 HP {status_hearts}",
         value=(
-            f"{hp_bar(p.hp, p.max_hp)} `{p.hp}/{p.max_hp}`\n"
+            f"{hp_bar(p.hp, player_max_hp(p))} `{p.hp}/{player_max_hp(p)}`\n"
             f"{combat_stat_lines(p)}\n"
             f"코인 `{p.coins}` · 폭탄 `{p.bombs}`"
         ),
@@ -3184,14 +3684,16 @@ async def leaderboard(interaction: discord.Interaction):
     대상="아이템을 받을 플레이어",
     아이템="지급할 아이템",
     수량="코인 또는 폭탄의 수량",
-    위력="무기 또는 방패의 위력",
+    위력="장비의 공격력 또는 방어력",
 )
 @discord.app_commands.choices(
     아이템=[
         discord.app_commands.Choice(name="코인", value="coin"),
         discord.app_commands.Choice(name="폭탄", value="bomb"),
         discord.app_commands.Choice(name="무기", value="weapon"),
-        discord.app_commands.Choice(name="방패", value="armor"),
+        discord.app_commands.Choice(name="반지", value="ring"),
+        discord.app_commands.Choice(name="방패", value="shield"),
+        discord.app_commands.Choice(name="투구", value="head"),
     ]
 )
 async def give_item(
@@ -3232,10 +3734,10 @@ async def give_item(
     elif 아이템 == "bomb":
         p.bombs += 수량
         result = f"폭탄 **{수량}개**"
-    elif 아이템 in ("weapon", "armor"):
+    elif 아이템 in ("weapon", "ring", "shield", "head"):
         if 수량 != 1:
             await interaction.response.send_message(
-                "무기와 방패는 한 번에 1개만 지급할 수 있습니다.",
+                "장비는 한 번에 1개만 지급할 수 있습니다.",
                 ephemeral=True,
             )
             return
@@ -3253,12 +3755,10 @@ async def give_item(
         if 위력 is not None:
             gear.power = 위력
 
-        if 아이템 == "weapon":
-            p.weapon = gear
-            result = f"무기 **{gear.name}** (공격 {gear.power})"
-        else:
-            p.armor = gear
-            result = f"방패 **{gear.name}** (방어 {gear.power})"
+        equip_gear(p, gear)
+        slot_name = gear_slot_name(아이템)
+        stat_name = "공격" if 아이템 in ("weapon", "ring") else "방어"
+        result = f"{slot_name} **{gear.display_name()}** ({stat_name} {gear.power})"
     else:
         await interaction.response.send_message(
             "알 수 없는 아이템입니다.",
@@ -3316,10 +3816,16 @@ async def sheet_update(interaction: discord.Interaction):
                 p.coins,
                 p.weapon.name,
                 p.weapon.power,
-                p.armor.name,
-                p.armor.power,
+                p.ring.name if p.ring else "",
+                p.ring.power if p.ring else "",
+                p.shield.name,
+                p.shield.power,
+                p.shield.hp_bonus,
+                p.head.name if p.head else "",
+                p.head.power if p.head else "",
+                p.head.hp_bonus if p.head else "",
                 p.bombs,
-                f"{p.hp}/{p.max_hp}",
+                f"{p.hp}/{player_max_hp(p)}",
                 p.status,
                 p.last_day or "미시작",
             ]
@@ -3375,7 +3881,7 @@ async def test_reset(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         "테스트 상태를 초기화했습니다. `/게임`으로 다시 시작할 수 있습니다.\n"
-        "**무기·방패·코인·폭탄은 유지됩니다.**",
+        "**무기·반지·방패·투구·코인·폭탄은 유지됩니다.**",
         ephemeral=True,
     )
 
