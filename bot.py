@@ -26,6 +26,8 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "플레이어 현황")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+DEBUG_USER_ID_RAW = os.getenv("DEBUG_USER_ID", "").strip()
+DEBUG_USER_ID = int(DEBUG_USER_ID_RAW) if DEBUG_USER_ID_RAW.isdigit() else None
 KST = ZoneInfo("Asia/Seoul")
 DB_PATH = Path("/data/game.db")
 
@@ -513,6 +515,17 @@ class Database:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS channel_ui_messages (
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, channel_id, kind)
+                )
+                """
+            )
             columns = {
                 row[1] for row in con.execute("PRAGMA table_info(players)").fetchall()
             }
@@ -704,6 +717,30 @@ class Database:
             )
             con.commit()
 
+    def get_channel_ui_message(self, guild_id: int, channel_id: int, kind: str):
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT message_id
+                FROM channel_ui_messages
+                WHERE guild_id=? AND channel_id=? AND kind=?
+                """,
+                (guild_id, channel_id, kind),
+            ).fetchone()
+        return int(row[0]) if row else None
+
+    def set_channel_ui_message(self, guild_id: int, channel_id: int, kind: str, message_id: int):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO channel_ui_messages (guild_id, channel_id, kind, message_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(guild_id, channel_id, kind) DO UPDATE SET
+                    message_id=excluded.message_id
+                """,
+                (guild_id, channel_id, kind, message_id),
+            )
+            con.commit()
 
     def leaderboard(self, guild_id: int, limit: int = 10):
         with self.connect() as con:
@@ -1052,6 +1089,54 @@ def gear_slot_name(kind: str) -> str:
         "shield": "방패",
         "head": "투구",
     }[kind]
+
+
+def stat_with_delta(current: int, projected: int) -> str:
+    delta = projected - current
+    return small_number(current) + (small_number(f"{delta:+d}") if delta else "")
+
+
+def gear_change_summary(player: PlayerState, gear: Gear) -> str:
+    current = equipped_gear(player, gear.kind)
+    current_power = current.power if current else 0
+    if gear.kind in ("weapon", "ring"):
+        before_power = attack_power(player)
+        after_power = max(0, before_power - current_power + gear.power)
+        before_affinity = {color: attack_affinity(player, color) for color in COLORS}
+        after_affinity = {
+            color: before_affinity[color] - affinity(current, color) + affinity(gear, color)
+            for color in COLORS
+        }
+        affinity_text = " ".join(
+            f"{COLOR_MARK[color]}{stat_with_delta(before_affinity[color], after_affinity[color])}"
+            for color in COLORS
+        )
+        return f"⚔️ {stat_with_delta(before_power, after_power)} · {affinity_text}"
+
+    before_power = defense_power(player)
+    after_power = max(0, before_power - current_power + gear.power)
+    before_affinity = {color: defense_affinity(player, color) for color in COLORS}
+    after_affinity = {
+        color: before_affinity[color] - affinity(current, color) + affinity(gear, color)
+        for color in COLORS
+    }
+    affinity_text = " ".join(
+        f"{COLOR_MARK[color]}{stat_with_delta(before_affinity[color], after_affinity[color])}"
+        for color in COLORS
+    )
+    before_hp = player_max_hp(player)
+    current_hp_bonus = current.hp_bonus if current else 0
+    after_hp = max(1, before_hp - current_hp_bonus + gear.hp_bonus)
+    return (
+        f"🛡️ {stat_with_delta(before_power, after_power)} · {affinity_text}\n"
+        f"❤️ {stat_with_delta(before_hp, after_hp)}"
+    )
+
+
+def room_title(session: GameSession, label: str) -> str:
+    if session.is_tutorial:
+        return f"0층 · 튜토리얼 · {label}"
+    return f"{session.floor_number}층 · {label}"
 
 
 def today_key() -> str:
@@ -1818,7 +1903,10 @@ def exploration_embed(player, session, note="", footer_status=""):
         target = add_pos(session.current, DIRECTIONS[direction])
         can_move = can_move_between(session, session.current, target)
         if can_move:
-            around.append(f"{DIR_EMOJI[direction]} 문")
+            if target == session.secret_pos and not session.rooms[target].visited:
+                around.append(f"{DIR_EMOJI[direction]} **???**")
+            else:
+                around.append(f"{DIR_EMOJI[direction]} 문")
 
     if crack_here(session):
         around.append(f"{DIR_EMOJI[session.secret_direction]} **금이 간 벽**")
@@ -1978,10 +2066,10 @@ async def animate_enemy_defeat(interaction, player, session, note):
         session.hit_animating = False
 
 
-def shop_embed(player, session, note=""):
+def shop_embed(player, session, note="", footer_status=""):
     persist_session(session)
     room = session.room()
-    embed = player_embed(player, session, "비밀 상점")
+    embed = player_embed(player, session, room_title(session, "비밀 상점"))
     if note:
         embed.description = note
 
@@ -2000,6 +2088,33 @@ def shop_embed(player, session, note=""):
         value="\n".join(lines),
         inline=False,
     )
+    if footer_status:
+        embed.set_footer(text=footer_status)
+    return embed
+
+
+def gear_purchase_embed(player: PlayerState, session: GameSession, gear: Gear, price: int, magic_shop: bool) -> discord.Embed:
+    title = room_title(session, "마법 상점" if magic_shop else "비밀 상점")
+    embed = player_embed(player, session, title)
+    current = equipped_gear(player, gear.kind)
+    slot_name = gear_slot_name(gear.kind)
+    embed.add_field(
+        name=f"새 {slot_name} · 🪙 {small_number(price)}",
+        value=gear.label(),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"현재 {slot_name}",
+        value=current.label() if current else "없음",
+        inline=False,
+    )
+    embed.add_field(
+        name="착용 시",
+        value=gear_change_summary(player, gear),
+        inline=False,
+    )
+    if magic_shop:
+        embed.set_footer(text="한 가지만 살 수 있다.")
     return embed
 
 
@@ -2067,6 +2182,30 @@ DEFEND_REAL = [
 ]
 
 
+class StatusCloseView(discord.ui.View):
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        close = discord.ui.Button(
+            label="닫기",
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def close_callback(interaction: discord.Interaction):
+            if interaction.user.id != self.owner_id:
+                await interaction.response.defer()
+                return
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        close.callback = close_callback
+        self.add_item(close)
+
+
 class OwnerView(discord.ui.View):
     def __init__(self, session: GameSession, timeout=300):
         super().__init__(timeout=timeout)
@@ -2082,6 +2221,7 @@ class OwnerView(discord.ui.View):
 class ExploreView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
+        p = session_player(session)
 
         for direction in ("왼쪽", "위", "아래", "오른쪽"):
             target = add_pos(session.current, DIRECTIONS[direction])
@@ -2105,6 +2245,7 @@ class ExploreView(OwnerView):
                 label=f"{DIR_EMOJI[session.secret_direction]} 벽 파괴",
                 emoji="💣",
                 style=discord.ButtonStyle.danger,
+                disabled=p.bombs <= 0,
             )
 
             async def crack_callback(interaction):
@@ -2260,7 +2401,8 @@ def loot_embed(player: PlayerState, session: GameSession, gear: Gear) -> discord
     current = equipped_gear(player, gear.kind)
     item_name = gear_slot_name(gear.kind)
     embed.add_field(name=f"새 {item_name}", value=gear.label(), inline=False)
-    embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "`없음`", inline=False)
+    embed.add_field(name=f"현재 {item_name}", value=current.label() if current else "없음", inline=False)
+    embed.add_field(name="착용 시", value=gear_change_summary(player, gear), inline=False)
     return embed
 
 
@@ -2309,6 +2451,48 @@ class LootView(OwnerView):
         self.add_item(skip)
 
 
+class GearPurchaseConfirmView(OwnerView):
+    def __init__(self, session, index: int, price: int, magic_shop: bool):
+        super().__init__(session)
+        self.index = index
+        self.price = price
+        self.magic_shop = magic_shop
+
+        confirm = discord.ui.Button(
+            label="구입 및 착용",
+            emoji="✅",
+            style=discord.ButtonStyle.success,
+        )
+        cancel = discord.ui.Button(
+            label="취소",
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def confirm_callback(interaction):
+            if self.magic_shop:
+                await confirm_magic_gear(interaction, self.session, self.index, self.price)
+            else:
+                await confirm_shop_gear(interaction, self.session, self.index, self.price)
+
+        async def cancel_callback(interaction):
+            p = session_player(self.session)
+            if self.magic_shop:
+                await interaction.response.edit_message(
+                    embed=magic_shop_embed(p, self.session),
+                    view=MagicShopView(self.session),
+                )
+            else:
+                await interaction.response.edit_message(
+                    embed=shop_embed(p, self.session),
+                    view=ShopView(self.session),
+                )
+
+        confirm.callback = confirm_callback
+        cancel.callback = cancel_callback
+        self.add_item(confirm)
+        self.add_item(cancel)
+
+
 class MagicShopView(OwnerView):
     def __init__(self, session):
         super().__init__(session)
@@ -2322,8 +2506,8 @@ class MagicShopView(OwnerView):
                 disabled=session.magic_shop_used or p.coins < price,
             )
 
-            async def callback(interaction, idx=index):
-                await buy_magic_gear(interaction, self.session, idx)
+            async def callback(interaction, idx=index, cost=price):
+                await buy_magic_gear(interaction, self.session, idx, cost)
 
             btn.callback = callback
             self.add_item(btn)
@@ -3109,14 +3293,17 @@ async def enemy_defeated(interaction, session, combat_note):
         if healed > 0:
             reward_lines.append(f"❤️ HP가 {healed} 회복됐다!")
         save_session_player(session, p)
-    reward_status = "\n".join(reward_lines)
-
     if enemy.boss:
         session.boss_defeated = True
         if session.floor_number % 5 == 0 and not session.is_tutorial:
+            previous_checkpoint = p.checkpoint_floor
             p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
             save_session_player(session, p)
+            if p.checkpoint_floor > previous_checkpoint:
+                reward_lines.append("📝 체크포인트가 기록되었다.")
             prepare_magic_shop(session)
+
+    reward_status = "\n".join(reward_lines)
 
     if enemy.boss or random.random() < 0.30:
         gear = generate_gear(
@@ -3166,7 +3353,6 @@ def death_description(player: PlayerState, note: str) -> str:
             + "\n\n**눈앞이 캄캄해졌다!**"
             + "\n오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!"
             + "\n무기·반지·방패·투구·코인·폭탄은 그대로 유지된다."
-            + "\n플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다."
         )
     return (
         note
@@ -3380,22 +3566,19 @@ async def climb_next_floor(interaction, session):
 
 def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> discord.Embed:
     persist_session(session)
-    embed = discord.Embed(
-        title=f"{session.floor_number}층 · 마법 상점",
-        description=note or "🔮 보스 방 한쪽에서 이상한 상인이 기다리고 있다.\n**한 가지만 살 수 있다.**",
-    )
+    embed = player_embed(player, session, room_title(session, "마법 상점"))
+    if note:
+        embed.description = note
+    lines = []
     for index, gear in enumerate(session.magic_shop_stock[:3], 1):
         price = magic_price(gear, session.floor_number)
-        current = equipped_gear(player, gear.kind)
-        embed.add_field(
-            name=f"{index}번 · 🪙 {small_number(price)}",
-            value=(
-                f"{gear.label()}\n"
-                f"현재 {gear_slot_name(gear.kind)}: {current.label() if current else '없음'}"
-            ),
-            inline=False,
-        )
-    embed.set_footer(text=f"🪙 현재 코인 {small_number(player.coins)}")
+        lines.append(f"{index}. 🪙 {small_number(price)} — {gear.label()}")
+    embed.add_field(
+        name="판매 목록",
+        value="\n".join(lines) if lines else "판매할 물건이 없다.",
+        inline=False,
+    )
+    embed.set_footer(text="한 가지만 살 수 있다.")
     return embed
 
 
@@ -3404,7 +3587,7 @@ async def open_magic_shop(interaction, session):
     p = session_player(session)
     if not magic_shop_available(session):
         await interaction.response.edit_message(
-            embed=exploration_embed(p, session, "상인은 이미 자리를 떠났다."),
+            embed=exploration_embed(p, session, "마법 상점은 이미 닫혔다."),
             view=ExploreView(session),
         )
         return
@@ -3414,36 +3597,54 @@ async def open_magic_shop(interaction, session):
     )
 
 
-async def buy_magic_gear(interaction, session, index):
+async def buy_magic_gear(interaction, session, index, price):
     p = session_player(session)
     if session.magic_shop_used or index >= len(session.magic_shop_stock):
         await interaction.response.edit_message(
-            embed=exploration_embed(p, session, "상인은 더 이상 거래하지 않는다."),
+            embed=exploration_embed(p, session, "상점은 이미 닫혔다."),
             view=ExploreView(session),
         )
         return
-
     gear = session.magic_shop_stock[index]
-    price = magic_price(gear, session.floor_number)
-    if p.coins < price:
+    actual_price = magic_price(gear, session.floor_number)
+    if actual_price != price or p.coins < actual_price:
         await interaction.response.edit_message(
-            embed=magic_shop_embed(p, session, "코인이 부족하다."),
+            embed=magic_shop_embed(p, session, "코인이 부족하다." if p.coins < actual_price else "가격이 바뀌었다."),
             view=MagicShopView(session),
         )
         return
+    await interaction.response.edit_message(
+        embed=gear_purchase_embed(p, session, gear, actual_price, True),
+        view=GearPurchaseConfirmView(session, index, actual_price, True),
+    )
 
-    p.coins -= price
+
+async def confirm_magic_gear(interaction, session, index, price):
+    p = session_player(session)
+    if session.magic_shop_used or index >= len(session.magic_shop_stock):
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "상점은 이미 닫혔다."),
+            view=ExploreView(session),
+        )
+        return
+    gear = session.magic_shop_stock[index]
+    actual_price = magic_price(gear, session.floor_number)
+    if actual_price != price or p.coins < actual_price:
+        await interaction.response.edit_message(
+            embed=magic_shop_embed(p, session, "코인이 부족하다." if p.coins < actual_price else "가격이 바뀌었다."),
+            view=MagicShopView(session),
+        )
+        return
+    p.coins -= actual_price
     equip_gear(p, gear)
     save_session_player(session, p)
     session.magic_shop_used = True
     session.magic_shop_stock.clear()
-
     await interaction.response.edit_message(
         embed=exploration_embed(
             p,
             session,
             f"**{gear.display_name()}** 구입 및 장착 완료.",
-            footer_status=f"🪙 코인을 {price}개 사용했다!",
         ),
         view=ExploreView(session),
     )
@@ -3452,27 +3653,47 @@ async def buy_magic_gear(interaction, session, index):
 async def buy_gear(interaction, session, index, price):
     room = session.room()
     p = session_player(session)
-
     if index >= len(room.shop_stock):
         await interaction.response.edit_message(
             embed=shop_embed(p, session, "이미 팔렸다."),
             view=ShopView(session),
         )
         return
-
-    if p.coins < price:
+    gear = room.shop_stock[index]
+    actual_price = gear_price(gear, session.floor_number)
+    if actual_price != price or p.coins < actual_price:
         await interaction.response.edit_message(
-            embed=shop_embed(p, session, "코인이 부족하다."),
+            embed=shop_embed(p, session, "코인이 부족하다." if p.coins < actual_price else "가격이 바뀌었다."),
             view=ShopView(session),
         )
         return
+    await interaction.response.edit_message(
+        embed=gear_purchase_embed(p, session, gear, actual_price, False),
+        view=GearPurchaseConfirmView(session, index, actual_price, False),
+    )
 
-    gear = room.shop_stock.pop(index)
-    p.coins -= price
 
+async def confirm_shop_gear(interaction, session, index, price):
+    room = session.room()
+    p = session_player(session)
+    if index >= len(room.shop_stock):
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "이미 팔렸다."),
+            view=ShopView(session),
+        )
+        return
+    gear = room.shop_stock[index]
+    actual_price = gear_price(gear, session.floor_number)
+    if actual_price != price or p.coins < actual_price:
+        await interaction.response.edit_message(
+            embed=shop_embed(p, session, "코인이 부족하다." if p.coins < actual_price else "가격이 바뀌었다."),
+            view=ShopView(session),
+        )
+        return
+    room.shop_stock.pop(index)
+    p.coins -= actual_price
     equip_gear(p, gear)
     save_session_player(session, p)
-
     await interaction.response.edit_message(
         embed=shop_embed(
             p,
@@ -3508,13 +3729,14 @@ async def buy_bomb(interaction, session):
     save_session_player(session, p)
 
     note = (
-        "💣 폭탄 **1개**를 구입했다."
+        "💣 폭탄을 구입했다."
         if room.bomb_stock > 0
-        else "💣 폭탄 **1개**를 구입했다. **SOLD OUT**"
+        else "💣 폭탄을 구입했다. **SOLD OUT**"
     )
+    footer_status = "💣 폭탄을 1개 획득했다!"
 
     await interaction.response.edit_message(
-        embed=shop_embed(p, session, note),
+        embed=shop_embed(p, session, note, footer_status=footer_status),
         view=ShopView(session),
     )
 
@@ -3545,13 +3767,13 @@ async def play_slot(interaction, session):
     reward_bonus = max(0, (session.floor_number - 1) // 2)
 
     note = ""
+    coin_gain = 0
     footer_lines = []
     if roll < 0.45:
         note = "아무것도 안 나왔다."
     elif roll < 0.68:
-        gain = random.randint(2, 4) + reward_bonus
-        p.coins += gain
-        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
+        coin_gain = random.randint(2, 4) + reward_bonus
+        p.coins += coin_gain
     elif roll < 0.80:
         p.bombs += 1
         footer_lines.append("💣 폭탄을 1개 획득했다!")
@@ -3562,10 +3784,12 @@ async def play_slot(interaction, session):
         restored = p.hp - before
         footer_lines.append(f"❤️ HP가 {restored} 회복됐다!")
     else:
-        gain = random.randint(6, 10) + reward_bonus * 2
-        p.coins += gain
+        coin_gain = random.randint(6, 10) + reward_bonus * 2
+        p.coins += coin_gain
         note = "🎰 잭팟!"
-        footer_lines.append(f"🪙 코인을 {gain}개 획득했다!")
+
+    if coin_gain:
+        footer_lines.insert(0, f"🪙 코인을 {coin_gain}개 획득했다!")
 
     break_rates = [0.05, 0.10, 0.20, 0.35, 0.55, 0.75]
     break_rate = break_rates[min(room.slot_uses - 1, len(break_rates) - 1)]
@@ -3617,7 +3841,7 @@ async def bomb_slot(interaction, session):
         embed=slot_embed(
             p,
             session,
-            "💣 슬롯머신 폭파!",
+            "💣 **KABOOM!!** 동전이 쏟아진다.",
             footer_status=f"🪙 코인을 {gain}개 획득했다!",
         ),
         view=SlotView(session),
@@ -3724,6 +3948,266 @@ def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str)
     return spreadsheet.url, len(rows)
 
 
+def debug_allowed(interaction: discord.Interaction) -> bool:
+    return DEBUG_USER_ID is not None and interaction.user.id == DEBUG_USER_ID
+
+
+def debug_panel_embed(guild_id: int, user_id: int, note: str = "") -> discord.Embed:
+    p = db.get_player(guild_id, user_id)
+    embed = discord.Embed(title="디버그")
+    if note:
+        embed.description = note
+    embed.add_field(
+        name="플레이어",
+        value=(
+            f"🪜 **{p.floor_number}층** · 👑 {small_number(p.highest_floor)}\n"
+            f"❤️ `{p.hp}/{player_max_hp(p)}` · 🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}\n"
+            f"⚔️ {small_number(attack_power(p))} · 🛡️ {small_number(defense_power(p))}"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="DEBUG_USER_ID와 일치하는 계정만 사용할 수 있다.")
+    return embed
+
+
+def debug_stop_sessions(guild_id: int, user_id: int):
+    key = (guild_id, user_id)
+    old = sessions.pop(key, None)
+    if old:
+        cancel_cue(old)
+        cancel_bleed(old, clear=True)
+        old.ended = True
+    old_tutorial = tutorial_sessions.pop(key, None)
+    if old_tutorial:
+        cancel_cue(old_tutorial)
+        cancel_bleed(old_tutorial, clear=True)
+        old_tutorial.ended = True
+    db.delete_run(guild_id, user_id)
+
+
+def debug_new_floor(guild_id: int, user_id: int, floor_number: int) -> GameSession:
+    debug_stop_sessions(guild_id, user_id)
+    p = db.get_player(guild_id, user_id)
+    p.floor_number = floor_number
+    p.last_day = today_key()
+    p.status = "playing"
+    p.hp = min(max(1, p.hp), player_max_hp(p))
+    db.save_player(p)
+    session = generate_floor(guild_id, user_id, p.last_day, floor_number)
+    sessions[(guild_id, user_id)] = session
+    persist_session(session)
+    return session
+
+
+async def debug_show_floor(interaction: discord.Interaction, floor_number: int):
+    session = debug_new_floor(interaction.guild_id, interaction.user.id, floor_number)
+    p = session_player(session)
+    await interaction.response.edit_message(
+        embed=exploration_embed(p, session, f"디버그: **{floor_number}층**으로 이동했다."),
+        view=ExploreView(session),
+    )
+
+
+async def debug_show_magic_shop(interaction: discord.Interaction, floor_number: int):
+    session = debug_new_floor(interaction.guild_id, interaction.user.id, floor_number)
+    p = session_player(session)
+    session.boss_defeated = True
+    session.current = session.boss_pos
+    boss_room = session.room()
+    boss_room.cleared = True
+    boss_room.visited = True
+    prepare_magic_shop(session)
+    persist_session(session)
+    await interaction.response.edit_message(
+        embed=magic_shop_embed(p, session),
+        view=MagicShopView(session),
+    )
+
+
+async def debug_show_secret_room(interaction: discord.Interaction, kind: str):
+    p = db.get_player(interaction.guild_id, interaction.user.id)
+    floor_number = max(1, p.floor_number)
+    session = debug_new_floor(interaction.guild_id, interaction.user.id, floor_number)
+    room = session.rooms[session.secret_pos]
+    room.kind = kind
+    room.visited = True
+    room.cleared = False
+    room.enemy = None
+    room.slot_uses = 0
+    room.slot_broken = False
+    room.shop_stock = []
+    room.bomb_stock = 0
+    if kind == "shop":
+        kinds = random.sample(normal_gear_kinds(floor_number), 2)
+        room.shop_stock = [generate_gear(item_kind, floor_number=floor_number) for item_kind in kinds]
+        room.bomb_stock = random.randint(1, 3)
+    session.secret_revealed = True
+    session.current = session.secret_pos
+    persist_session(session)
+    p = session_player(session)
+    if kind == "shop":
+        await interaction.response.edit_message(embed=shop_embed(p, session), view=ShopView(session))
+    else:
+        await interaction.response.edit_message(embed=slot_embed(p, session), view=SlotView(session))
+
+
+class DebugFloorModal(discord.ui.Modal, title="층 이동"):
+    floor_input = discord.ui.TextInput(label="층", placeholder="예: 12", max_length=4)
+
+    def __init__(self, user_id: int):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not debug_allowed(interaction) or interaction.user.id != self.user_id or interaction.guild_id is None:
+            await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+            return
+        try:
+            floor_number = int(str(self.floor_input.value).strip())
+        except ValueError:
+            await interaction.response.send_message("층은 숫자로 입력해 주세요.", ephemeral=True)
+            return
+        if floor_number < 1 or floor_number > 999:
+            await interaction.response.send_message("층은 1~999 사이로 입력해 주세요.", ephemeral=True)
+            return
+        await debug_show_floor(interaction, floor_number)
+
+
+class DebugGearSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="장비 버리기 / 초기화",
+            min_values=1,
+            max_values=1,
+            row=3,
+            options=[
+                discord.SelectOption(label="무기 버리기", value="weapon", description="기본 무기로 되돌린다."),
+                discord.SelectOption(label="반지 버리기", value="ring"),
+                discord.SelectOption(label="방패 버리기", value="shield", description="기본 방패로 되돌린다."),
+                discord.SelectOption(label="투구 버리기", value="head"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not debug_allowed(interaction) or interaction.guild_id is None:
+            await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+            return
+        p = db.get_player(interaction.guild_id, interaction.user.id)
+        kind = self.values[0]
+        if kind == "weapon":
+            p.weapon = Gear.from_json(START_WEAPON.to_json())
+            note = "무기를 버리고 기본 무기로 되돌렸다."
+        elif kind == "shield":
+            p.shield = Gear.from_json(START_SHIELD.to_json())
+            note = "방패를 버리고 기본 방패로 되돌렸다."
+        elif kind == "ring":
+            p.ring = None
+            note = "반지를 버렸다."
+        else:
+            p.head = None
+            note = "투구를 버렸다."
+        p.hp = min(p.hp, player_max_hp(p))
+        db.save_player(p)
+        await interaction.response.edit_message(
+            embed=debug_panel_embed(interaction.guild_id, interaction.user.id, note),
+            view=DebugView(interaction.user.id),
+        )
+
+
+class DebugView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=900)
+        self.user_id = user_id
+        actions = [
+            ("층 이동", None, discord.ButtonStyle.primary, 0, "floor"),
+            ("5층 마법상점", "🔮", discord.ButtonStyle.secondary, 0, "magic5"),
+            ("10층 마법상점", "🔮", discord.ButtonStyle.secondary, 0, "magic10"),
+            ("비밀 상점", "🛒", discord.ButtonStyle.secondary, 0, "shop"),
+            ("슬롯머신", "🎰", discord.ButtonStyle.secondary, 0, "slot"),
+            ("코인 0", "🪙", discord.ButtonStyle.secondary, 1, "coin0"),
+            ("코인 +10", "🪙", discord.ButtonStyle.secondary, 1, "coin10"),
+            ("폭탄 0", "💣", discord.ButtonStyle.secondary, 1, "bomb0"),
+            ("폭탄 +10", "💣", discord.ButtonStyle.secondary, 1, "bomb10"),
+            ("HP -1", None, discord.ButtonStyle.secondary, 2, "hpminus"),
+            ("HP +1", None, discord.ButtonStyle.secondary, 2, "hpplus"),
+            ("HP 회복", "❤️", discord.ButtonStyle.secondary, 2, "hpfull"),
+            ("오늘 리셋", "↻", discord.ButtonStyle.danger, 2, "dailyreset"),
+        ]
+        for label, emoji, style, row, action in actions:
+            button = discord.ui.Button(label=label, emoji=emoji, style=style, row=row)
+
+            async def callback(interaction, selected_action=action):
+                await self.run_action(interaction, selected_action)
+
+            button.callback = callback
+            self.add_item(button)
+        self.add_item(DebugGearSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or not debug_allowed(interaction):
+            if not interaction.response.is_done():
+                await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+            return False
+        return True
+
+    async def run_action(self, interaction: discord.Interaction, action: str):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+            return
+        if action == "floor":
+            await interaction.response.send_modal(DebugFloorModal(self.user_id))
+            return
+        if action == "magic5":
+            await debug_show_magic_shop(interaction, 5)
+            return
+        if action == "magic10":
+            await debug_show_magic_shop(interaction, 10)
+            return
+        if action == "shop":
+            await debug_show_secret_room(interaction, "shop")
+            return
+        if action == "slot":
+            await debug_show_secret_room(interaction, "slot")
+            return
+
+        p = db.get_player(interaction.guild_id, interaction.user.id)
+        note = ""
+        if action == "coin0":
+            p.coins = 0
+            note = "코인을 0으로 만들었다."
+        elif action == "coin10":
+            p.coins += 10
+            note = "코인을 10개 추가했다."
+        elif action == "bomb0":
+            p.bombs = 0
+            note = "폭탄을 0으로 만들었다."
+        elif action == "bomb10":
+            p.bombs += 10
+            note = "폭탄을 10개 추가했다."
+        elif action == "hpminus":
+            p.hp = max(1, p.hp - 1)
+            note = "HP를 1 줄였다."
+        elif action == "hpplus":
+            p.hp = min(player_max_hp(p), p.hp + 1)
+            note = "HP를 1 늘렸다."
+        elif action == "hpfull":
+            p.hp = player_max_hp(p)
+            note = "HP를 전부 회복했다."
+        elif action == "dailyreset":
+            debug_stop_sessions(interaction.guild_id, interaction.user.id)
+            db.test_reset(interaction.guild_id, interaction.user.id)
+            await interaction.response.edit_message(
+                embed=debug_panel_embed(interaction.guild_id, interaction.user.id, "오늘의 플레이 제한과 현재 진행을 초기화했다."),
+                view=DebugView(self.user_id),
+            )
+            return
+        db.save_player(p)
+        await interaction.response.edit_message(
+            embed=debug_panel_embed(interaction.guild_id, interaction.user.id, note),
+            view=DebugView(self.user_id),
+        )
+
+
 intents = discord.Intents.default()
 
 
@@ -3733,6 +4217,21 @@ class ShapeGameBot(commands.Bot):
 
 
 bot = ShapeGameBot(command_prefix="!", intents=intents)
+
+
+@bot.tree.command(name="디버그", description="개발자용 테스트 패널을 엽니다.")
+async def debug_command(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        return
+    if not debug_allowed(interaction):
+        await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+        return
+    await interaction.response.send_message(
+        embed=debug_panel_embed(interaction.guild_id, interaction.user.id),
+        view=DebugView(interaction.user.id),
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="게임", description="오늘의 탐색을 시작하거나 이어서 플레이합니다.")
@@ -3851,8 +4350,7 @@ async def game(interaction: discord.Interaction):
         if p.lives_used >= MAX_DAILY_LIVES:
             await interaction.response.send_message(
                 "오늘은 더 이상 플레이할 수 없다. 내일 다시 도전하자!\n"
-                "무기·반지·방패·투구·코인·폭탄은 그대로 유지된다.\n"
-                "플레이테스트 중이라면 `/테스트리셋`을 사용할 수 있습니다.",
+                "무기·반지·방패·투구·코인·폭탄은 그대로 유지된다.",
                 ephemeral=True,
             )
             return
@@ -4024,11 +4522,11 @@ async def status(interaction: discord.Interaction):
 
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
     embed.add_field(
-        name=f"내 HP {status_hearts}",
+        name="내 HP",
         value=(
             f"{hp_bar(p.hp, player_max_hp(p))} `{p.hp}/{player_max_hp(p)}`\n"
             f"{combat_stat_lines(p)}\n"
-            f"🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}"
+            f"{status_hearts} · 🪙 {small_number(p.coins)} · 💣 {small_number(p.bombs)}"
         ),
         inline=False,
     )
@@ -4039,11 +4537,15 @@ async def status(interaction: discord.Interaction):
     )
     embed.add_field(
         name="진행",
-        value=f"🪜 {small_number(p.floor_number)} · 👑 {small_number(p.highest_floor)}",
+        value=f"🪜 **{p.floor_number}층** · 👑 {small_number(p.highest_floor)}",
         inline=False,
     )
     embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(
+        embed=embed,
+        view=StatusCloseView(interaction.user.id),
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="점수판", description="순위를 확인합니다.")
@@ -4066,14 +4568,34 @@ async def leaderboard(interaction: discord.Interaction):
             lines.append("")
         rank_mark = medals.get(rank, f"{rank}.")
         lines.append(
-            f"{rank_mark} {name} — 🪜 {small_number(floor_number)} · 🪙 {small_number(coins)}"
+            f"{rank_mark} {name} — 🪜 **{floor_number}층** · 🪙 {small_number(coins)}"
         )
 
     embed = discord.Embed(
         title="진행 순위",
         description="\n".join(lines) if lines else "아직 기록이 없다.",
     )
+
+    old_message_id = db.get_channel_ui_message(
+        interaction.guild_id,
+        interaction.channel_id,
+        "leaderboard",
+    )
+    channel = interaction.channel
+    if old_message_id is not None and channel is not None and hasattr(channel, "get_partial_message"):
+        try:
+            await channel.get_partial_message(old_message_id).delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
     await interaction.response.send_message(embed=embed)
+    message = await interaction.original_response()
+    db.set_channel_ui_message(
+        interaction.guild_id,
+        interaction.channel_id,
+        "leaderboard",
+        message.id,
+    )
 
 
 @bot.tree.command(name="주기", description="플레이어에게 아이템을 지급합니다.")
@@ -4249,38 +4771,6 @@ async def sheet_update(interaction: discord.Interaction):
         )
     )
 
-
-@bot.tree.command(
-    name="테스트리셋",
-    description="플레이테스트용: 오늘의 플레이 제한과 현재 진행을 초기화합니다.",
-)
-async def test_reset(interaction: discord.Interaction):
-    if interaction.guild_id is None:
-        await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
-            ephemeral=True,
-        )
-        return
-
-    key = (interaction.guild_id, interaction.user.id)
-
-    old = sessions.pop(key, None)
-    if old:
-        cancel_cue(old)
-        old.ended = True
-
-    old_tutorial = tutorial_sessions.pop(key, None)
-    if old_tutorial:
-        cancel_cue(old_tutorial)
-        old_tutorial.ended = True
-
-    db.test_reset(interaction.guild_id, interaction.user.id)
-
-    await interaction.response.send_message(
-        "테스트 상태를 초기화했습니다. `/게임`으로 다시 시작할 수 있습니다.\n"
-        "**무기·반지·방패·투구·코인·폭탄은 유지됩니다.**",
-        ephemeral=True,
-    )
 
 
 if __name__ == "__main__":
