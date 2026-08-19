@@ -28,6 +28,7 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 DEBUG_USER_ID_RAW = os.getenv("DEBUG_USER_ID", "").strip()
 DEBUG_USER_ID = int(DEBUG_USER_ID_RAW) if DEBUG_USER_ID_RAW.isdigit() else None
+FULL_VERSION_PASSWORD = os.getenv("FULL_VERSION_PASSWORD", "").strip()
 KST = ZoneInfo("Asia/Seoul")
 DB_PATH = Path("/data/game.db")
 
@@ -42,6 +43,7 @@ EMBED_COLORS = {
 DIR_EMOJI = {"위": "⬆️", "오른쪽": "➡️", "아래": "⬇️", "왼쪽": "⬅️"}
 RUN_SUCCESS_RATE = 0.65
 MAX_DAILY_LIVES = 3
+DAILY_TARGET_FLOOR = 10
 PERFECT_WINDOW_BONUS = 0.10
 CRITICAL_HP_RATIO = 0.25
 CRITICAL_PERFECT_WINDOW_BONUS = 0.20
@@ -102,6 +104,88 @@ def small_number(value) -> str:
     return str(value).translate(SUPERSCRIPT_TRANS)
 
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
+NORMAL_GEAR_NAMES = {
+    "weapon": ("유리 파편", "금속 파이프", "깨진 칼날", "고장 난 절단기", "비상 신호총"),
+    "ring": ("철사 반지", "녹슨 반지", "구리 반지", "볼트 반지", "얇은 합금 반지"),
+    "shield": ("화물 상자 뚜껑", "기계 덮개", "깨진 방탄유리", "비상문 조각", "금 간 방패"),
+    "head": ("낡은 안전모", "깨진 바이저", "작업용 헬멧", "안전모", "두꺼운 후드"),
+}
+UTILITY_ITEMS = ("폭탄", "항아리")
+CHARACTER_BASIC = "basic"
+CHARACTER_VAMPIRE = "vampire"
+CHARACTER_BOMBER = "bomber"
+CHARACTER_SCRAPPER = "scrapper"
+CHARACTER_POT_THROWER = "pot_thrower"
+CHARACTER_TOMB_RAIDER = "tomb_raider"
+CHARACTER_PERFECTIONIST = "perfectionist"
+CHARACTER_GLASS = "glass"
+CHARACTER_CHAOS = "chaos"
+CHARACTERS = {
+    CHARACTER_BASIC: {
+        "name": "기본",
+        "description": "특별한 능력이 없다.",
+        "ability": "가장 평범한 탐사자.",
+    },
+    CHARACTER_VAMPIRE: {
+        "name": "흡혈",
+        "description": "피를 흘리게 하고 상처를 회복하는 탐사자.",
+        "ability": "직접 공격으로 출혈을 내는 데 성공하면 50% 확률로 HP를 1 회복한다.",
+    },
+    CHARACTER_BOMBER: {
+        "name": "폭발광",
+        "description": "폭발물을 유난히 잘 다루는 탐사자.",
+        "ability": "폭탄 10개로 시작한다. 폭탄 피해가 2 증가하고 폭탄 수급량이 늘어난다.",
+    },
+    CHARACTER_SCRAPPER: {
+        "name": "고물상",
+        "description": "버려지는 장비에서도 쓸모를 찾아낸다.",
+        "ability": "전리품 장비를 버리면 가치에 따라 코인을 얻는다.",
+    },
+    CHARACTER_POT_THROWER: {
+        "name": "항아리 투척꾼",
+        "description": "항아리를 깨는 대신 들고 다닐 수 있다.",
+        "ability": "항아리 하나를 보관해 전투에서 던질 수 있다. 던진 항아리는 폭탄과 같은 피해를 주며 항아리의 피해를 받지 않는다.",
+    },
+    CHARACTER_TOMB_RAIDER: {
+        "name": "도굴꾼",
+        "description": "숨겨진 공간의 기척을 알아챈다.",
+        "ability": "층에 들어설 때부터 보스의 위치를 알고 비밀방이 열려 있다.",
+    },
+    CHARACTER_PERFECTIONIST: {
+        "name": "완벽주의자",
+        "description": "완벽한 타이밍만을 노린다.",
+        "ability": "PERFECT 공격과 반격이 더 강하다. 대신 GOOD 공격의 피해가 감소한다.",
+    },
+    CHARACTER_GLASS: {
+        "name": "유리몸",
+        "description": "조금만 맞아도 위험하지만 공격은 강하다.",
+        "ability": "기본 최대 HP가 10이 되는 대신 직접 공격 피해가 3 증가한다.",
+    },
+    CHARACTER_CHAOS: {
+        "name": "혼돈",
+        "description": "다른 무기를 사용할 수 없는 변칙적인 탐사자.",
+        "ability": "혼돈의 검으로 시작한다. 직접 공격이 적중할 때마다 검의 효과가 무작위로 발동한다.",
+    },
+}
+CHARACTER_ORDER = (
+    CHARACTER_BASIC,
+    CHARACTER_VAMPIRE,
+    CHARACTER_BOMBER,
+    CHARACTER_SCRAPPER,
+    CHARACTER_POT_THROWER,
+    CHARACTER_TOMB_RAIDER,
+    CHARACTER_PERFECTIONIST,
+    CHARACTER_GLASS,
+    CHARACTER_CHAOS,
+)
+DAILY_RULES = (
+    "🏺 항아리 증가",
+    "🪙 코인 부족",
+    "💣 화약 부족",
+    "💰 비밀 상점",
+    "👾 강한 개체",
+    "🚪 열린 비밀방",
+)
 ENEMY_MODIFIERS = (
     "졸린",
     "멍한",
@@ -369,6 +453,9 @@ START_HEAD = Gear(
     "head", "낡은 안전모", 0, {"시안": 0, "마젠타": 0, "옐로": 0}, 0
 )
 START_ARMOR = START_SHIELD
+CHAOS_SWORD = Gear(
+    "weapon", "혼돈의 검", 4, {"시안": 0, "마젠타": 0, "옐로": 0}
+)
 
 
 @dataclass
@@ -460,6 +547,14 @@ class GameSession:
     pending_loot: Optional[Gear] = None
     pending_loot_note: str = ""
     pending_loot_footer: str = ""
+    carried_pot: int = 0
+    mode: str = "main"
+    character_key_override: Optional[str] = None
+    daily_rule: str = ""
+
+    @property
+    def is_daily(self) -> bool:
+        return self.mode == "daily"
 
     def room(self) -> Room:
         return self.rooms[self.current]
@@ -526,6 +621,93 @@ class Database:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS full_access (
+                    user_id INTEGER PRIMARY KEY,
+                    authorized_at TEXT NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_meta (
+                    user_id INTEGER PRIMARY KEY,
+                    ending15_count INTEGER NOT NULL DEFAULT 0,
+                    true_ending_count INTEGER NOT NULL DEFAULT 0,
+                    bomb_uses INTEGER NOT NULL DEFAULT 0,
+                    gear_discards INTEGER NOT NULL DEFAULT 0,
+                    pots_broken INTEGER NOT NULL DEFAULT 0,
+                    secrets_found INTEGER NOT NULL DEFAULT 0,
+                    perfect_count INTEGER NOT NULL DEFAULT 0,
+                    flawless_true_endings INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS discoveries (
+                    user_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    item_key TEXT NOT NULL,
+                    PRIMARY KEY (user_id, category, item_key)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_meta (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    character_key TEXT NOT NULL DEFAULT 'basic',
+                    reincarnated INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_runs (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    day_key TEXT NOT NULL,
+                    floor_number INTEGER NOT NULL,
+                    state_json TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_records (
+                    guild_id INTEGER NOT NULL,
+                    day_key TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    floor_number INTEGER NOT NULL DEFAULT 1,
+                    coins INTEGER NOT NULL DEFAULT 0,
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    finished INTEGER NOT NULL DEFAULT 0,
+                    character_key TEXT NOT NULL DEFAULT 'basic',
+                    rule TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (guild_id, day_key, user_id)
+                )
+                """
+            )
+            user_meta_columns = {
+                row[1] for row in con.execute("PRAGMA table_info(user_meta)").fetchall()
+            }
+            user_meta_additions = {
+                "gear_discards": "INTEGER NOT NULL DEFAULT 0",
+                "pots_broken": "INTEGER NOT NULL DEFAULT 0",
+                "secrets_found": "INTEGER NOT NULL DEFAULT 0",
+                "perfect_count": "INTEGER NOT NULL DEFAULT 0",
+                "flawless_true_endings": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in user_meta_additions.items():
+                if name not in user_meta_columns:
+                    con.execute(f"ALTER TABLE user_meta ADD COLUMN {name} {definition}")
+
             columns = {
                 row[1] for row in con.execute("PRAGMA table_info(players)").fetchall()
             }
@@ -717,6 +899,98 @@ class Database:
             )
             con.commit()
 
+    def save_daily_run(self, guild_id: int, user_id: int, day_key: str, floor_number: int, state_json: str):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO daily_runs (guild_id, user_id, day_key, floor_number, state_json)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    day_key=excluded.day_key,
+                    floor_number=excluded.floor_number,
+                    state_json=excluded.state_json
+                """,
+                (guild_id, user_id, day_key, floor_number, state_json),
+            )
+            con.commit()
+
+    def load_daily_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT day_key, floor_number, state_json
+                FROM daily_runs
+                WHERE guild_id=? AND user_id=?
+                """,
+                (guild_id, user_id),
+            ).fetchone()
+
+    def delete_daily_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM daily_runs WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
+            )
+            con.commit()
+
+    def record_daily_progress(self, guild_id: int, day_key: str, user_id: int, floor_number: int, coins: int, character_key: str, rule: str, completed: bool = False, finished: bool = False):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO daily_records
+                    (guild_id, day_key, user_id, floor_number, coins, completed, finished, character_key, rule, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, day_key, user_id) DO UPDATE SET
+                    floor_number=excluded.floor_number,
+                    coins=excluded.coins,
+                    completed=MAX(daily_records.completed, excluded.completed),
+                    finished=MAX(daily_records.finished, excluded.finished),
+                    character_key=excluded.character_key,
+                    rule=excluded.rule,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    guild_id, day_key, user_id, max(1, floor_number), max(0, coins),
+                    int(completed), int(finished), character_key, rule,
+                    datetime.now(KST).isoformat(timespec="seconds"),
+                ),
+            )
+            con.commit()
+
+    def get_daily_record(self, guild_id: int, day_key: str, user_id: int):
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT floor_number, coins, completed, finished, character_key, rule
+                FROM daily_records
+                WHERE guild_id=? AND day_key=? AND user_id=?
+                """,
+                (guild_id, day_key, user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "floor_number": int(row[0]),
+            "coins": int(row[1]),
+            "completed": bool(row[2]),
+            "finished": bool(row[3]),
+            "character_key": str(row[4]),
+            "rule": str(row[5]),
+        }
+
+    def daily_ranking(self, guild_id: int, day_key: str, limit: int = 10):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT user_id, floor_number, coins, completed, finished
+                FROM daily_records
+                WHERE guild_id=? AND day_key=?
+                ORDER BY completed DESC, floor_number DESC, coins DESC, user_id ASC
+                LIMIT ?
+                """,
+                (guild_id, day_key, limit),
+            ).fetchall()
+
     def get_channel_ui_message(self, guild_id: int, channel_id: int, kind: str):
         with self.connect() as con:
             row = con.execute(
@@ -739,6 +1013,141 @@ class Database:
                     message_id=excluded.message_id
                 """,
                 (guild_id, channel_id, kind, message_id),
+            )
+            con.commit()
+
+    def has_full_access(self, user_id: int) -> bool:
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT 1 FROM full_access WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+        return row is not None
+
+    def grant_full_access(self, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO full_access (user_id, authorized_at) VALUES (?, ?)",
+                (user_id, datetime.now(KST).isoformat(timespec="seconds")),
+            )
+            con.commit()
+
+    def get_user_meta(self, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO user_meta (user_id) VALUES (?)",
+                (user_id,),
+            )
+            row = con.execute(
+                "SELECT ending15_count, true_ending_count, bomb_uses, gear_discards, pots_broken, secrets_found, perfect_count, flawless_true_endings FROM user_meta WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            con.commit()
+        return {
+            "ending15_count": int(row[0]),
+            "true_ending_count": int(row[1]),
+            "bomb_uses": int(row[2]),
+            "gear_discards": int(row[3]),
+            "pots_broken": int(row[4]),
+            "secrets_found": int(row[5]),
+            "perfect_count": int(row[6]),
+            "flawless_true_endings": int(row[7]),
+        }
+
+    def increment_user_meta(self, user_id: int, field: str, amount: int = 1):
+        allowed = {"bomb_uses", "gear_discards", "pots_broken", "secrets_found", "perfect_count", "flawless_true_endings"}
+        if field not in allowed:
+            raise ValueError("알 수 없는 메타 기록입니다.")
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO user_meta (user_id) VALUES (?)",
+                (user_id,),
+            )
+            con.execute(
+                f"UPDATE user_meta SET {field}={field}+? WHERE user_id=?",
+                (max(0, amount), user_id),
+            )
+            con.commit()
+
+    def record_bomb_use(self, user_id: int, amount: int = 1):
+        self.increment_user_meta(user_id, "bomb_uses", amount)
+
+    def record_gear_discard(self, user_id: int, amount: int = 1):
+        self.increment_user_meta(user_id, "gear_discards", amount)
+
+    def record_pot_break(self, user_id: int, amount: int = 1):
+        self.increment_user_meta(user_id, "pots_broken", amount)
+
+    def record_secret_found(self, user_id: int, amount: int = 1):
+        self.increment_user_meta(user_id, "secrets_found", amount)
+
+    def record_perfect(self, user_id: int, amount: int = 1):
+        self.increment_user_meta(user_id, "perfect_count", amount)
+
+    def record_flawless_true_ending(self, user_id: int):
+        self.increment_user_meta(user_id, "flawless_true_endings", 1)
+
+    def record_ending(self, user_id: int, true_ending: bool = False):
+        field = "true_ending_count" if true_ending else "ending15_count"
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO user_meta (user_id) VALUES (?)",
+                (user_id,),
+            )
+            con.execute(
+                f"UPDATE user_meta SET {field}={field}+1 WHERE user_id=?",
+                (user_id,),
+            )
+            con.commit()
+
+    def discover(self, user_id: int, category: str, item_key: str):
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO discoveries (user_id, category, item_key) VALUES (?, ?, ?)",
+                (user_id, category, item_key),
+            )
+            con.commit()
+
+    def get_discoveries(self, user_id: int, category: str):
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT item_key FROM discoveries WHERE user_id=? AND category=?",
+                (user_id, category),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def get_run_meta(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT character_key, reincarnated FROM run_meta WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
+            ).fetchone()
+        if row is None:
+            return {"character_key": CHARACTER_BASIC, "reincarnated": False}
+        character_key = str(row[0]) if str(row[0]) in CHARACTERS else CHARACTER_BASIC
+        return {"character_key": character_key, "reincarnated": bool(row[1])}
+
+    def set_run_meta(self, guild_id: int, user_id: int, character_key: str, reincarnated: bool):
+        if character_key not in CHARACTERS:
+            character_key = CHARACTER_BASIC
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO run_meta (guild_id, user_id, character_key, reincarnated)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    character_key=excluded.character_key,
+                    reincarnated=excluded.reincarnated
+                """,
+                (guild_id, user_id, character_key, int(reincarnated)),
+            )
+            con.commit()
+
+    def clear_run_meta(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM run_meta WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
             )
             con.commit()
 
@@ -807,7 +1216,206 @@ class Database:
 db = Database(DB_PATH)
 sessions: Dict[Tuple[int, int], GameSession] = {}
 tutorial_sessions: Dict[Tuple[int, int], GameSession] = {}
+daily_sessions: Dict[Tuple[int, int], GameSession] = {}
 debug_messages = {}
+
+
+def full_version_allowed(user_id: int) -> bool:
+    return (DEBUG_USER_ID is not None and user_id == DEBUG_USER_ID) or db.has_full_access(user_id)
+
+
+def current_character_key(guild_id: int, user_id: int) -> str:
+    return db.get_run_meta(guild_id, user_id)["character_key"]
+
+
+def current_character_name(guild_id: int, user_id: int) -> str:
+    return CHARACTERS[current_character_key(guild_id, user_id)]["name"]
+
+
+def session_character_key(session: GameSession) -> str:
+    if session.character_key_override in CHARACTERS:
+        return session.character_key_override
+    if session.is_tutorial or not full_version_allowed(session.user_id):
+        return CHARACTER_BASIC
+    return current_character_key(session.guild_id, session.user_id)
+
+
+def player_character_key(player: PlayerState) -> str:
+    if not full_version_allowed(player.user_id):
+        return CHARACTER_BASIC
+    return current_character_key(player.guild_id, player.user_id)
+
+
+def character_bomb_damage_bonus(session: GameSession) -> int:
+    return 2 if session_character_key(session) == CHARACTER_BOMBER else 0
+
+
+def character_direct_damage_bonus(session: GameSession, grade: str) -> int:
+    key = session_character_key(session)
+    if grade == "MISS":
+        return 0
+    if key == CHARACTER_GLASS:
+        return 3
+    if key == CHARACTER_PERFECTIONIST:
+        return 3 if grade == "PERFECT" else -2
+    return 0
+
+
+def character_perfect_counter_bonus(session: GameSession) -> int:
+    return 2 if session_character_key(session) == CHARACTER_PERFECTIONIST else 0
+
+
+def bomber_bomb_gain(session: GameSession, amount: int = 1) -> int:
+    if amount <= 0:
+        return 0
+    return amount * 2 if session_character_key(session) == CHARACTER_BOMBER else amount
+
+
+def vampire_attack_heal(player: PlayerState, session: GameSession, bleed_applied: bool) -> int:
+    if session_character_key(session) != CHARACTER_VAMPIRE:
+        return 0
+    if not bleed_applied or player.hp >= player_max_hp(player):
+        return 0
+    if random.random() >= 0.50:
+        return 0
+    before = player.hp
+    player.hp = min(player_max_hp(player), player.hp + 1)
+    return player.hp - before
+
+
+def chaos_attack_effect(player: PlayerState, session: GameSession, enemy: Enemy, grade: str):
+    if session_character_key(session) != CHARACTER_CHAOS or grade == "MISS":
+        return 0, "", False, 0
+    effect = random.choice(("power", "bleed", "heal"))
+    if effect == "power":
+        return 3, "🌀 혼돈의 검이 난폭하게 진동한다. **추가 3 피해!**", False, 0
+    if effect == "bleed":
+        return 0, "🌀 혼돈의 검이 상처를 찢어 놓는다.", True, 0
+    before = player.hp
+    player.hp = min(player_max_hp(player), player.hp + 1)
+    healed = player.hp - before
+    return 0, (f"🌀 혼돈의 검이 생기를 끌어온다. ❤️ HP가 {healed} 회복됐다!" if healed else "🌀 혼돈의 검이 생기를 끌어오려 했지만 이미 멀쩡하다."), False, healed
+
+
+def character_unlocked(user_id: int, character_key: str) -> bool:
+    if character_key == CHARACTER_BASIC:
+        return True
+    meta = db.get_user_meta(user_id)
+    if character_key == CHARACTER_VAMPIRE:
+        return meta["ending15_count"] >= 1
+    if character_key == CHARACTER_BOMBER:
+        return meta["bomb_uses"] >= 50
+    if character_key == CHARACTER_SCRAPPER:
+        return meta["gear_discards"] >= 30
+    if character_key == CHARACTER_POT_THROWER:
+        return meta["pots_broken"] >= 50
+    if character_key == CHARACTER_TOMB_RAIDER:
+        return meta["secrets_found"] >= 30
+    if character_key == CHARACTER_PERFECTIONIST:
+        return meta["perfect_count"] >= 30
+    if character_key == CHARACTER_GLASS:
+        return meta["flawless_true_endings"] >= 1
+    if character_key == CHARACTER_CHAOS:
+        completed = {
+            key
+            for key in db.get_discoveries(user_id, "ending15_character")
+            if key in CHARACTER_ORDER and key != CHARACTER_CHAOS
+        }
+        return len(completed) >= 5
+    return False
+
+
+def character_unlock_text(user_id: int, character_key: str) -> str:
+    meta = db.get_user_meta(user_id)
+    if character_key == CHARACTER_BASIC:
+        return "처음부터 사용 가능"
+    if character_key == CHARACTER_VAMPIRE:
+        return f"15층 엔딩 1회 · {min(meta['ending15_count'], 1)}/1"
+    if character_key == CHARACTER_BOMBER:
+        return f"폭탄 누적 50회 사용 · {min(meta['bomb_uses'], 50)}/50"
+    if character_key == CHARACTER_SCRAPPER:
+        return f"장비 누적 30회 버리기 · {min(meta['gear_discards'], 30)}/30"
+    if character_key == CHARACTER_POT_THROWER:
+        return f"항아리 누적 50개 깨기 · {min(meta['pots_broken'], 50)}/50"
+    if character_key == CHARACTER_TOMB_RAIDER:
+        return f"비밀방 누적 30회 발견 · {min(meta['secrets_found'], 30)}/30"
+    if character_key == CHARACTER_PERFECTIONIST:
+        return f"PERFECT 누적 30회 · {min(meta['perfect_count'], 30)}/30"
+    if character_key == CHARACTER_GLASS:
+        return f"목숨 3개를 모두 유지한 채 30층 진엔딩 · {min(meta['flawless_true_endings'], 1)}/1"
+    if character_key == CHARACTER_CHAOS:
+        completed = {
+            key
+            for key in db.get_discoveries(user_id, "ending15_character")
+            if key in CHARACTER_ORDER and key != CHARACTER_CHAOS
+        }
+        return f"서로 다른 캐릭터로 15층 엔딩 5회 · {min(len(completed), 5)}/5"
+    return "해금 조건 미정"
+
+
+def unlocked_character_keys(user_id: int):
+    return [key for key in CHARACTER_ORDER if character_unlocked(user_id, key)]
+
+
+def monster_catalog():
+    return tuple(SHAPES.keys())
+
+
+def tool_catalog():
+    result = []
+    for kind in ("weapon", "ring", "shield", "head"):
+        result.extend(NORMAL_GEAR_NAMES[kind])
+    result.extend(MAGIC_NAMES.values())
+    result.append(CHAOS_SWORD.display_name())
+    result.extend(UTILITY_ITEMS)
+    return tuple(dict.fromkeys(result))
+
+
+def discover_tool(user_id: int, name: str):
+    db.discover(user_id, "tool", name)
+
+
+def discover_equipped_tools(player: PlayerState):
+    discover_tool(player.user_id, player.weapon.display_name())
+    discover_tool(player.user_id, player.shield.display_name())
+    if player.ring is not None:
+        discover_tool(player.user_id, player.ring.display_name())
+    if player.head is not None:
+        discover_tool(player.user_id, player.head.display_name())
+    if player.bombs > 0:
+        discover_tool(player.user_id, "폭탄")
+
+
+def reset_player_for_full_run(player: PlayerState, character_key: str, carried: Optional[Gear] = None):
+    player.coins = 3
+    player.bombs = 10 if character_key == CHARACTER_BOMBER else 2
+    player.max_hp = 10 if character_key == CHARACTER_GLASS else 20
+    player.weapon = Gear.from_json(CHAOS_SWORD.to_json()) if character_key == CHARACTER_CHAOS else Gear.from_json(START_WEAPON.to_json())
+    player.ring = None
+    player.shield = Gear.from_json(START_SHIELD.to_json())
+    player.head = None
+    if carried is not None and not (character_key == CHARACTER_CHAOS and carried.kind == "weapon"):
+        equip_gear(player, Gear.from_json(carried.to_json()))
+    player.hp = player_max_hp(player)
+    player.last_day = today_key()
+    player.status = "playing"
+    player.floor_number = 1
+    player.checkpoint_floor = 0
+    player.lives_used = 0
+    player.highest_floor = max(player.highest_floor, 1)
+    db.save_player(player)
+    db.set_run_meta(player.guild_id, player.user_id, character_key, carried is not None)
+
+
+def mark_full_run_ready(player: PlayerState):
+    player.status = "ready"
+    player.floor_number = 1
+    player.checkpoint_floor = 0
+    player.lives_used = 0
+    player.last_day = today_key()
+    db.save_player(player)
+    db.clear_run_meta(player.guild_id, player.user_id)
+    db.delete_run(player.guild_id, player.user_id)
 
 
 def gear_state(gear: Optional[Gear]):
@@ -898,6 +1506,58 @@ def room_from_state(data):
     return room
 
 
+def player_state_data(player: Optional[PlayerState]):
+    if player is None:
+        return None
+    return {
+        "guild_id": player.guild_id,
+        "user_id": player.user_id,
+        "coins": player.coins,
+        "bombs": player.bombs,
+        "max_hp": player.max_hp,
+        "hp": player.hp,
+        "weapon": gear_state(player.weapon),
+        "ring": gear_state(player.ring),
+        "shield": gear_state(player.shield),
+        "head": gear_state(player.head),
+        "last_day": player.last_day,
+        "status": player.status,
+        "floor_number": player.floor_number,
+        "highest_floor": player.highest_floor,
+        "checkpoint_floor": player.checkpoint_floor,
+        "lives_used": player.lives_used,
+        "tutorial_completed": player.tutorial_completed,
+    }
+
+
+def player_from_state_data(data):
+    if not data:
+        return None
+    weapon = gear_from_state(data.get("weapon"))
+    shield = gear_from_state(data.get("shield"))
+    if weapon is None or shield is None:
+        raise ValueError("저장된 플레이어 장비가 올바르지 않습니다.")
+    return PlayerState(
+        guild_id=int(data["guild_id"]),
+        user_id=int(data["user_id"]),
+        coins=int(data.get("coins", 0)),
+        bombs=int(data.get("bombs", 0)),
+        max_hp=int(data.get("max_hp", 20)),
+        hp=int(data.get("hp", 20)),
+        weapon=weapon,
+        ring=gear_from_state(data.get("ring")),
+        shield=shield,
+        head=gear_from_state(data.get("head")),
+        last_day=str(data.get("last_day", "")),
+        status=str(data.get("status", "daily")),
+        floor_number=int(data.get("floor_number", 1)),
+        highest_floor=int(data.get("highest_floor", 1)),
+        checkpoint_floor=int(data.get("checkpoint_floor", 0)),
+        lives_used=int(data.get("lives_used", 0)),
+        tutorial_completed=bool(data.get("tutorial_completed", True)),
+    )
+
+
 def session_state(session: GameSession):
     return {
         "version": 1,
@@ -918,6 +1578,11 @@ def session_state(session: GameSession):
         "pending_loot": gear_state(session.pending_loot),
         "pending_loot_note": session.pending_loot_note,
         "pending_loot_footer": session.pending_loot_footer,
+        "carried_pot": session.carried_pot,
+        "mode": session.mode,
+        "character_key_override": session.character_key_override,
+        "daily_rule": session.daily_rule,
+        "temp_player": player_state_data(session.temp_player) if session.temp_player is not None else None,
     }
 
 
@@ -958,6 +1623,11 @@ def session_from_state(guild_id: int, user_id: int, raw: str):
         pending_loot=gear_from_state(data.get("pending_loot")),
         pending_loot_note=str(data.get("pending_loot_note", "")),
         pending_loot_footer=str(data.get("pending_loot_footer", "")),
+        carried_pot=max(0, min(1, int(data.get("carried_pot", 0)))),
+        mode=str(data.get("mode", "main")),
+        character_key_override=data.get("character_key_override"),
+        daily_rule=str(data.get("daily_rule", "")),
+        temp_player=player_from_state_data(data.get("temp_player")),
     )
     room = session.room()
     if room.kind in ("normal", "boss") and not room.cleared and room.enemy is not None:
@@ -969,6 +1639,20 @@ def persist_session(session: GameSession):
     if session.is_tutorial:
         return
     try:
+        if session.is_daily:
+            p = session_player(session)
+            db.record_daily_progress(
+                session.guild_id,
+                session.day_key,
+                session.user_id,
+                session.floor_number,
+                p.coins,
+                session_character_key(session),
+                session.daily_rule,
+            )
+            raw = json.dumps(session_state(session), ensure_ascii=False, separators=(",", ":"))
+            db.save_daily_run(session.guild_id, session.user_id, session.day_key, session.floor_number, raw)
+            return
         if session.ended:
             db.delete_run(session.guild_id, session.user_id)
             return
@@ -976,6 +1660,25 @@ def persist_session(session: GameSession):
         db.save_run(session.guild_id, session.user_id, session.day_key, session.floor_number, raw)
     except Exception as exc:
         print(f"맵 저장에 실패했습니다: {type(exc).__name__}: {exc}")
+
+
+def load_persisted_daily_session(guild_id: int, user_id: int, day_key: str):
+    row = db.load_daily_run(guild_id, user_id)
+    if row is None:
+        return None
+    saved_day, saved_floor, raw = row
+    if saved_day != day_key:
+        db.delete_daily_run(guild_id, user_id)
+        return None
+    try:
+        session = session_from_state(guild_id, user_id, raw)
+        if not session.is_daily or int(saved_floor) != int(session.floor_number):
+            raise ValueError("저장된 데일리 상태가 올바르지 않습니다.")
+        return session
+    except Exception as exc:
+        print(f"저장된 데일리를 불러오지 못했습니다: {type(exc).__name__}: {exc}")
+        db.delete_daily_run(guild_id, user_id)
+        return None
 
 
 def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_number: int):
@@ -995,14 +1698,14 @@ def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_numb
 
 
 def session_player(session: GameSession) -> PlayerState:
-    if session.is_tutorial:
+    if session.is_tutorial or session.is_daily:
         assert session.temp_player is not None
         return session.temp_player
     return db.get_player(session.guild_id, session.user_id)
 
 
 def save_session_player(session: GameSession, player: PlayerState):
-    if session.is_tutorial:
+    if session.is_tutorial or session.is_daily:
         session.temp_player = player
         return
     db.save_player(player)
@@ -1212,22 +1915,22 @@ def generate_gear(kind: str, boss_drop=False, floor_number: int = 1) -> Gear:
     floor_bonus = max(0, floor_number - 1)
 
     if kind == "weapon":
-        names = ["유리 파편", "금속 파이프", "깨진 칼날", "고장 난 절단기", "비상 신호총"]
+        names = NORMAL_GEAR_NAMES["weapon"]
         low, high = ((5, 8) if boss_drop else (4, 6))
         power = random.randint(low, high) + floor_bonus
         hp_bonus = 0
     elif kind == "ring":
-        names = ["철사 반지", "녹슨 반지", "구리 반지", "볼트 반지", "얇은 합금 반지"]
+        names = NORMAL_GEAR_NAMES["ring"]
         low, high = ((2, 3) if boss_drop else (1, 3))
         power = random.randint(low, high)
         hp_bonus = 0
     elif kind == "shield":
-        names = ["화물 상자 뚜껑", "기계 덮개", "깨진 방탄유리", "비상문 조각", "금 간 방패"]
+        names = NORMAL_GEAR_NAMES["shield"]
         low, high = ((2, 4) if boss_drop else (1, 3))
         power = random.randint(low, high) + floor_bonus // 2
         hp_bonus = random.randint(*gear_hp_range("shield", floor_number))
     elif kind == "head":
-        names = ["낡은 안전모", "깨진 바이저", "작업용 헬멧", "안전모", "두꺼운 후드"]
+        names = NORMAL_GEAR_NAMES["head"]
         low, high = ((1, 2) if boss_drop else (0, 2))
         power = random.randint(low, high) + floor_bonus // 4
         hp_bonus = random.randint(*gear_hp_range("head", floor_number))
@@ -1266,7 +1969,10 @@ def prepare_magic_shop(session: GameSession):
         or session.magic_shop_stock
     ):
         return
-    effects = random.sample(magic_pool_for_floor(session.floor_number), 3)
+    pool = list(magic_pool_for_floor(session.floor_number))
+    if session_character_key(session) == CHARACTER_CHAOS:
+        pool = [effect for effect in pool if MAGIC_KINDS[effect] != "weapon"]
+    effects = random.sample(pool, min(3, len(pool)))
     session.magic_shop_stock = [
         generate_magic_gear(effect, session.floor_number) for effect in effects
     ]
@@ -1322,7 +2028,12 @@ def bfs_distances(positions, start=(0, 0)):
     return distance
 
 
-def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1) -> GameSession:
+def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1, character_key: Optional[str] = None) -> GameSession:
+    effective_character = character_key if character_key in CHARACTERS else (
+        current_character_key(guild_id, user_id)
+        if full_version_allowed(user_id)
+        else CHARACTER_BASIC
+    )
     positions = {(0, 0)}
     while len(positions) < 8:
         anchor = random.choice(tuple(positions))
@@ -1377,7 +2088,12 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
 
     secret = Room(secret_pos, secret_kind)
     if secret_kind == "shop":
-        shop_kinds = random.sample(normal_gear_kinds(floor_number), 2)
+        shop_pool = list(normal_gear_kinds(floor_number))
+        if effective_character == CHARACTER_CHAOS:
+            shop_pool = [kind for kind in shop_pool if kind != "weapon"]
+        shop_kinds = random.sample(shop_pool, min(2, len(shop_pool)))
+        while shop_pool and len(shop_kinds) < 2:
+            shop_kinds.append(random.choice(shop_pool))
         secret.shop_stock = [
             generate_gear(kind, floor_number=floor_number)
             for kind in shop_kinds
@@ -1397,6 +2113,8 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1)
         secret_pos=secret_pos,
         secret_from=secret_from,
         secret_direction=secret_direction,
+        secret_revealed=effective_character == CHARACTER_TOMB_RAIDER,
+        character_key_override=character_key if character_key in CHARACTERS else None,
     )
 
 
@@ -1655,13 +2373,16 @@ def timing_windows(player: PlayerState, enemy: Enemy, kind: str):
         critical_bonus = CRITICAL_PERFECT_WINDOW_BONUS if enemy_is_critical(enemy) else 0.0
         perfect = min(
             good,
-            spec["attack_perfect"] + PERFECT_WINDOW_BONUS + critical_bonus,
+            max(0.05, spec["attack_perfect"] + PERFECT_WINDOW_BONUS + critical_bonus),
         )
         return perfect, good
 
     extra = 0.05 * defense_affinity(player, enemy.color)
     good = spec["defend_good"] + extra
-    perfect = min(good, spec["defend_perfect"] + PERFECT_WINDOW_BONUS + extra)
+    perfect = min(
+        good,
+        max(0.05, spec["defend_perfect"] + PERFECT_WINDOW_BONUS + extra),
+    )
     return perfect, good
 
 
@@ -1789,10 +2510,11 @@ def crack_here(session: GameSession):
 
 
 def map_ascii(session: GameSession):
+    tomb_raider = session_character_key(session) == CHARACTER_TOMB_RAIDER
     visible = {
         p: room
         for p, room in session.rooms.items()
-        if p != session.secret_pos or session.secret_revealed
+        if p != session.secret_pos or session.secret_revealed or tomb_raider
     }
 
     xs = [p[0] for p in visible]
@@ -1815,7 +2537,7 @@ def map_ascii(session: GameSession):
         elif pos == session.secret_pos:
             mark = "S"
         elif pos == session.boss_pos:
-            mark = "B" if room.visited or room.cleared else "?"
+            mark = "B" if tomb_raider or room.visited or room.cleared else "?"
         elif not room.visited:
             mark = "?"
         elif room.cleared:
@@ -1871,7 +2593,11 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
     resource_line = (
         f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
-        else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+        else (
+            f"❤️ · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+            if session.is_daily
+            else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+        )
     )
 
     value = (
@@ -1917,13 +2643,24 @@ def exploration_embed(player, session, note="", footer_status=""):
         and session.current == session.boss_pos
         and not session.is_tutorial
     ):
-        around.append(f"🪜 **{session.floor_number + 1}층**")
+        if full_version_allowed(session.user_id) and session.floor_number == 30:
+            around.append("📖 **진엔딩**")
+        else:
+            around.append(f"🪜 **{session.floor_number + 1}층**")
+        if full_version_allowed(session.user_id) and session.floor_number == 15:
+            around.append("📖 **엔딩** · ⛲ **환생**")
 
     resources = (
         f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
-        else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+        else (
+            f"❤️ · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+            if session.is_daily
+            else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+        )
     )
+    if session.carried_pot > 0:
+        resources += f" · 🏺 {small_number(session.carried_pot)}"
 
     parts = []
     if note:
@@ -1954,13 +2691,25 @@ def exploration_embed(player, session, note="", footer_status=""):
                 footer_lines.append("⚠️ 튜토리얼의 아이템은 사라져요!")
         elif session.current == session.boss_pos:
             footer_lines.append("보스를 처치했다!")
-            footer_lines.append(
-                f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
-            )
+            if full_version_allowed(session.user_id) and session.floor_number == 15:
+                run_meta = db.get_run_meta(session.guild_id, session.user_id)
+                options = "엔딩을 보거나, 16층으로 가거나 더 둘러볼 수 있다."
+                if not run_meta["reincarnated"]:
+                    options = "엔딩을 보거나, 환생하거나, 16층으로 갈 수 있다."
+                footer_lines.append(options)
+            elif full_version_allowed(session.user_id) and session.floor_number == 30:
+                footer_lines.append("진엔딩을 볼 수 있다.")
+            else:
+                footer_lines.append(
+                    f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
+                )
         else:
-            footer_lines.append(
-                f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
-            )
+            if full_version_allowed(session.user_id) and session.floor_number == 30:
+                footer_lines.append("보스 방에서 진엔딩을 볼 수 있다.")
+            else:
+                footer_lines.append(
+                    f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
+                )
 
     if footer_lines:
         embed.set_footer(text="\n".join(footer_lines))
@@ -2017,6 +2766,7 @@ def combat_embed(player, session, note="", enemy_art: Optional[str] = None):
             f"`{player.hp}/{player_max_hp(player)}`\n"
             f"{combat_stat_lines(player)}\n"
             f"💣 {small_number(player.bombs)}"
+            + (f" · 🏺 {small_number(session.carried_pot)}" if session.carried_pot > 0 else "")
         ),
         inline=False,
     )
@@ -2068,12 +2818,16 @@ async def animate_enemy_defeat(interaction, player, session, note):
 
 
 def shop_embed(player, session, note="", footer_status=""):
-    persist_session(session)
     room = session.room()
+    if session_character_key(session) == CHARACTER_CHAOS:
+        room.shop_stock = [gear for gear in room.shop_stock if gear.kind != "weapon"]
+    persist_session(session)
     embed = discord.Embed(title=room_title(session, "비밀 상점"), description=note or None)
 
     lines = []
     for i, gear in enumerate(room.shop_stock[:2], 1):
+        if not session.is_tutorial:
+            discover_tool(session.user_id, gear.display_name())
         price = gear_price(gear, session.floor_number)
         lines.append(f"{i}. 🪙 {small_number(price)} — {gear.label()}")
     price = bomb_price(session.floor_number)
@@ -2093,6 +2847,8 @@ def shop_embed(player, session, note="", footer_status=""):
 
 
 def gear_purchase_embed(player: PlayerState, session: GameSession, gear: Gear, price: int, magic_shop: bool) -> discord.Embed:
+    if not session.is_tutorial:
+        discover_tool(session.user_id, gear.display_name())
     title = room_title(session, "마법 상점" if magic_shop else "비밀 상점")
     embed = discord.Embed(title=title)
     current = equipped_gear(player, gear.kind)
@@ -2266,6 +3022,19 @@ class ExploreView(OwnerView):
             btn.callback = pot_callback
             self.add_item(btn)
 
+            if session_character_key(session) == CHARACTER_POT_THROWER and session.carried_pot <= 0:
+                take = discord.ui.Button(
+                    label="항아리 줍기",
+                    emoji="👐",
+                    style=discord.ButtonStyle.secondary,
+                )
+
+                async def take_callback(interaction):
+                    await take_pot(interaction, self.session)
+
+                take.callback = take_callback
+                self.add_item(take)
+
         if magic_shop_available(session):
             magic_shop = discord.ui.Button(
                 label="마법 상점",
@@ -2292,7 +3061,46 @@ class ExploreView(OwnerView):
 
                 btn.callback = leave_tutorial_callback
                 self.add_item(btn)
+            elif full_version_allowed(session.user_id) and session.floor_number == 30:
+                ending = discord.ui.Button(
+                    label="진엔딩",
+                    emoji="📖",
+                    style=discord.ButtonStyle.success,
+                )
+
+                async def true_ending_callback(interaction):
+                    await finish_full_ending(interaction, self.session, True)
+
+                ending.callback = true_ending_callback
+                self.add_item(ending)
             else:
+                if full_version_allowed(session.user_id) and session.floor_number == 15:
+                    ending = discord.ui.Button(
+                        label="엔딩",
+                        emoji="📖",
+                        style=discord.ButtonStyle.secondary,
+                    )
+
+                    async def ending_callback(interaction):
+                        await finish_full_ending(interaction, self.session, False)
+
+                    ending.callback = ending_callback
+                    self.add_item(ending)
+
+                    reincarnated = db.get_run_meta(session.guild_id, session.user_id)["reincarnated"]
+                    rebirth = discord.ui.Button(
+                        label="환생 완료" if reincarnated else "환생",
+                        emoji="⛲",
+                        style=discord.ButtonStyle.secondary,
+                        disabled=reincarnated,
+                    )
+
+                    async def rebirth_callback(interaction):
+                        await open_reincarnation(interaction, self.session)
+
+                    rebirth.callback = rebirth_callback
+                    self.add_item(rebirth)
+
                 btn = discord.ui.Button(
                     label=f"{session.floor_number + 1}층",
                     emoji="🪜",
@@ -2367,6 +3175,19 @@ class CombatView(OwnerView):
             bomb.callback = bomb_callback
             self.add_item(bomb)
 
+            if session_character_key(session) == CHARACTER_POT_THROWER:
+                pot = discord.ui.Button(
+                    emoji="🏺",
+                    style=discord.ButtonStyle.secondary,
+                    disabled=session.carried_pot <= 0,
+                )
+
+                async def pot_callback(interaction):
+                    await combat_pot(interaction, self.session)
+
+                pot.callback = pot_callback
+                self.add_item(pot)
+
         else:
             shield = discord.ui.Button(
                 label="방어하기",
@@ -2383,6 +3204,8 @@ class CombatView(OwnerView):
 
 
 def loot_embed(player: PlayerState, session: GameSession, gear: Gear) -> discord.Embed:
+    if not session.is_tutorial:
+        discover_tool(session.user_id, gear.display_name())
     enemy = session.room().enemy
     colour = EMBED_COLORS[enemy.color] if enemy is not None else None
     embed = discord.Embed(
@@ -2429,6 +3252,15 @@ class LootView(OwnerView):
             )
 
         async def skip_callback(interaction):
+            p = session_player(session)
+            if not session.is_tutorial:
+                db.record_gear_discard(session.user_id)
+            footer_status = ""
+            if session_character_key(session) == CHARACTER_SCRAPPER:
+                salvage = max(2, gear.power + gear.hp_bonus + sum(gear.affinity.values()))
+                p.coins += salvage
+                save_session_player(session, p)
+                footer_status = f"🪙 코인을 {salvage}개 얻었다!"
             session.pending_loot = None
             session.pending_loot_note = ""
             session.pending_loot_footer = ""
@@ -2436,6 +3268,7 @@ class LootView(OwnerView):
                 interaction,
                 session,
                 "새 장비를 버렸다.",
+                footer_status=footer_status,
             )
 
         equip.callback = equip_callback
@@ -2851,6 +3684,10 @@ async def move_player(interaction, session, direction, target):
     room = session.room()
     room.visited = True
     p = session_player(session)
+    if not session.is_tutorial and room.kind == "pot":
+        discover_tool(session.user_id, "항아리")
+    if not session.is_tutorial and room.kind in ("normal", "boss") and room.enemy is not None:
+        db.discover(session.user_id, "monster", room.enemy.shape)
 
     flee_note = flee_overpowered_enemy(session, p)
     if flee_note:
@@ -2889,7 +3726,7 @@ async def move_player(interaction, session, direction, target):
 
     if room.kind == "coin" and not room.cleared:
         reward_bonus = max(0, (session.floor_number - 1) // 2)
-        amount = random.randint(2, 4) + reward_bonus
+        amount = daily_coin_gain(session, random.randint(2, 4) + reward_bonus)
         p.coins += amount
         room.cleared = True
         save_session_player(session, p)
@@ -2945,11 +3782,13 @@ async def break_pot(interaction, session):
 
     p = session_player(session)
     room.cleared = True
+    if not session.is_tutorial:
+        db.record_pot_break(session.user_id)
     roll = random.random()
 
     if roll < 0.50:
         reward_bonus = max(0, (session.floor_number - 1) // 2)
-        amount = random.randint(2, 5) + reward_bonus
+        amount = daily_coin_gain(session, random.randint(2, 5) + reward_bonus)
         p.coins += amount
         save_session_player(session, p)
         note = "🏺 항아리를 깼다! 반짝이는 것이 보인다."
@@ -2958,22 +3797,26 @@ async def break_pot(interaction, session):
         note = "🏺 항아리를 깼다! 아무것도 없다."
         footer_status = ""
     else:
-        damage = random.randint(1, 3)
-        if has_magic(p, "head", MAGIC_HEAD_POT_GUARD):
-            damage = max(0, damage - 2)
-        p.hp = max(0, p.hp - damage)
-        save_session_player(session, p)
-        note = "🏺 항아리를 깼다!"
-        footer_status = f"❤️ HP가 {damage} 감소했다!"
+        if session_character_key(session) == CHARACTER_POT_THROWER:
+            note = "🏺 항아리를 깼다! 아무것도 없다."
+            footer_status = ""
+        else:
+            damage = random.randint(1, 3)
+            if has_magic(p, "head", MAGIC_HEAD_POT_GUARD):
+                damage = max(0, damage - 2)
+            p.hp = max(0, p.hp - damage)
+            save_session_player(session, p)
+            note = "🏺 항아리를 깼다!"
+            footer_status = f"❤️ HP가 {damage} 감소했다!"
 
-        if p.hp <= 0:
-            await player_died(
-                interaction,
-                session,
-                note,
-                footer_status=footer_status,
-            )
-            return
+            if p.hp <= 0:
+                await player_died(
+                    interaction,
+                    session,
+                    note,
+                    footer_status=footer_status,
+                )
+                return
 
     await interaction.response.edit_message(
         embed=exploration_embed(
@@ -2981,6 +3824,29 @@ async def break_pot(interaction, session):
             session,
             note,
             footer_status=footer_status,
+        ),
+        view=ExploreView(session),
+    )
+
+
+async def take_pot(interaction, session):
+    room = session.room()
+    if (
+        room.kind != "pot"
+        or room.cleared
+        or session_character_key(session) != CHARACTER_POT_THROWER
+        or session.carried_pot > 0
+    ):
+        await interaction.response.defer()
+        return
+    room.cleared = True
+    session.carried_pot = 1
+    persist_session(session)
+    await interaction.response.edit_message(
+        embed=exploration_embed(
+            session_player(session),
+            session,
+            "🏺 항아리를 하나 챙겼다.",
         ),
         view=ExploreView(session),
     )
@@ -2996,8 +3862,13 @@ async def open_secret(interaction, session):
         return
 
     p.bombs -= 1
+    if not session.is_tutorial:
+        db.record_bomb_use(session.user_id)
+        discover_tool(session.user_id, "폭탄")
     save_session_player(session, p)
     session.secret_revealed = True
+    if not session.is_tutorial:
+        db.record_secret_found(session.user_id)
 
     await interaction.response.edit_message(
         embed=exploration_embed(
@@ -3011,6 +3882,8 @@ async def open_secret(interaction, session):
 
 async def start_battle(interaction, session):
     enemy = session.room().enemy
+    if enemy is not None and not session.is_tutorial:
+        db.discover(session.user_id, "monster", enemy.shape)
     if enemy is None or enemy.hp <= 0:
         p = session_player(session)
         session.phase = "explore"
@@ -3106,28 +3979,52 @@ async def press_timing(interaction, session, kind):
     perfect, good = timing_windows(p, enemy, kind)
     grade = timing_grade(elapsed, perfect, good)
     cancel_cue(session)
+    if grade == "PERFECT" and not session.is_tutorial:
+        db.record_perfect(session.user_id)
 
     if kind == "attack":
         damage = attack_damage(p, enemy, grade)
         damage += weapon_magic_damage_bonus(p, enemy, session, grade)
+        damage += character_direct_damage_bonus(session, grade)
+        chaos_bonus, chaos_note, chaos_bleed, chaos_healed = chaos_attack_effect(p, session, enemy, grade)
+        damage = max(0, damage + chaos_bonus)
         if grade == "MISS":
             session.attack_chain = 0
         else:
             session.attack_chain += 1
         enemy.hp -= damage
 
+        bleed_applied = False
         if grade == "PERFECT":
             note = (
                 f"💥 **SMAAAASH!!**\n"
                 f"`{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
             )
             if enemy.hp > 0:
-                stacks = apply_bleed(enemy, p)
+                apply_bleed(enemy, p)
+                bleed_applied = True
                 schedule_bleed(interaction, session)
         elif grade == "GOOD":
             note = f"⚔️ **HIT!** · `{elapsed:.2f}초` — 적에게 **{damage} 피해!**"
+            if enemy.hp > 0 and session_character_key(session) == CHARACTER_VAMPIRE:
+                apply_bleed(enemy, p)
+                bleed_applied = True
+                schedule_bleed(interaction, session)
         else:
             note = f"**MISS!** · `{elapsed:.2f}초` — 공격이 빗나갔다."
+
+        if chaos_bleed and enemy.hp > 0:
+            apply_bleed(enemy, p)
+            schedule_bleed(interaction, session)
+        if chaos_note:
+            note += f"\n{chaos_note}"
+        if chaos_healed > 0:
+            save_session_player(session, p)
+
+        healed = vampire_attack_heal(p, session, bleed_applied)
+        if healed > 0:
+            save_session_player(session, p)
+            note += f"\n❤️ 흡혈로 HP가 {healed} 회복됐다!"
 
         if enemy.hp <= 0:
             await enemy_defeated(interaction, session, note)
@@ -3150,7 +4047,11 @@ async def press_timing(interaction, session, kind):
     save_session_player(session, p)
 
     if grade == "PERFECT":
-        counter = PERFECT_COUNTER_DAMAGE + (1 if has_magic(p, "shield", MAGIC_SHIELD_COUNTER) else 0)
+        counter = (
+            PERFECT_COUNTER_DAMAGE
+            + (1 if has_magic(p, "shield", MAGIC_SHIELD_COUNTER) else 0)
+            + character_perfect_counter_bonus(session)
+        )
         enemy.hp -= counter
         note = (
             f"🛡️ **PERFECT GUARD!!**\n"
@@ -3180,6 +4081,43 @@ async def press_timing(interaction, session, kind):
     schedule_cue(interaction, session, "attack")
 
 
+async def combat_pot(interaction, session):
+    if session.phase != "attack" or session.carried_pot <= 0:
+        await interaction.response.defer()
+        return
+
+    p = session_player(session)
+    enemy = session.room().enemy
+    if enemy is None:
+        await interaction.response.defer()
+        return
+
+    cancel_cue(session)
+    session.carried_pot = 0
+    if not session.is_tutorial:
+        db.record_pot_break(session.user_id)
+    damage = (
+        random.randint(*BOMB_DAMAGE)
+        + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
+        + character_bomb_damage_bonus(session)
+    )
+    enemy.hp -= damage
+    note = f"🏺 **KABOOM!!** 적에게 **{damage} 피해!**"
+    persist_session(session)
+
+    if enemy.hp <= 0:
+        await enemy_defeated(interaction, session, note)
+        return
+
+    session.phase = "defend"
+    await edit_interaction_message(
+        interaction,
+        embed=combat_embed(p, session, note + "\n\n적이 반격한다."),
+        view=CombatView(session, "defend"),
+    )
+    schedule_cue(interaction, session, "defend")
+
+
 async def combat_bomb(interaction, session):
     if session.phase != "attack":
         await interaction.response.defer()
@@ -3202,9 +4140,16 @@ async def combat_bomb(interaction, session):
 
     cancel_cue(session)
     p.bombs -= 1
+    if not session.is_tutorial:
+        db.record_bomb_use(session.user_id)
+        discover_tool(session.user_id, "폭탄")
     save_session_player(session, p)
 
-    damage = random.randint(*BOMB_DAMAGE) + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
+    damage = (
+        random.randint(*BOMB_DAMAGE)
+        + (2 if has_magic(p, "ring", MAGIC_RING_BOMB) else 0)
+        + character_bomb_damage_bonus(session)
+    )
     enemy.hp -= damage
     note = f"💣 **KABOOM!!** 적에게 **{damage} 피해!**"
 
@@ -3278,16 +4223,20 @@ async def enemy_defeated(interaction, session, combat_note):
     coins = random.randint(low, high) + reward_bonus
     if enemy.boss:
         coins += random.randint(5, 9) + reward_bonus
+    coins = daily_coin_gain(session, coins)
 
     p.coins += coins
 
-    bomb_gain = 1 if random.random() < (0.40 if enemy.boss else 0.25) else 0
+    bomb_chance = (0.65 if enemy.boss else 0.45) if session_character_key(session) == CHARACTER_BOMBER else (0.40 if enemy.boss else 0.25)
+    if session.is_daily and session.daily_rule == "💣 화약 부족":
+        bomb_chance *= 0.35
+    bomb_gain = bomber_bomb_gain(session, 1) if random.random() < bomb_chance else 0
     p.bombs += bomb_gain
     save_session_player(session, p)
 
     reward_lines = [f"🪙 코인을 {coins}개 획득했다!"]
     if bomb_gain:
-        reward_lines.append("💣 폭탄을 1개 획득했다!")
+        reward_lines.append(f"💣 폭탄을 {bomb_gain}개 획득했다!")
     if enemy.boss and has_magic(p, "head", MAGIC_HEAD_BOSS_HEAL):
         before = p.hp
         p.hp = min(player_max_hp(p), p.hp + 2)
@@ -3298,18 +4247,33 @@ async def enemy_defeated(interaction, session, combat_note):
     if enemy.boss:
         session.boss_defeated = True
         if session.floor_number % 5 == 0 and not session.is_tutorial:
-            previous_checkpoint = p.checkpoint_floor
-            p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
-            save_session_player(session, p)
-            if p.checkpoint_floor > previous_checkpoint:
-                reward_lines.append("📝 체크포인트가 기록되었다.")
-            prepare_magic_shop(session)
+            if not session.is_daily:
+                previous_checkpoint = p.checkpoint_floor
+                p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
+                save_session_player(session, p)
+                if p.checkpoint_floor > previous_checkpoint:
+                    reward_lines.append("📝 체크포인트가 기록되었다.")
+            if not (session.is_daily and session.floor_number >= DAILY_TARGET_FLOOR):
+                prepare_magic_shop(session)
 
     reward_status = "\n".join(reward_lines)
 
+    if session.is_daily and enemy.boss and session.floor_number >= DAILY_TARGET_FLOOR:
+        await finish_daily_challenge(
+            interaction,
+            session,
+            True,
+            combat_note + "\n\n**10층의 마지막 적을 쓰러뜨렸다!**",
+            footer_status=reward_status,
+        )
+        return
+
     if enemy.boss or random.random() < 0.30:
+        loot_kinds = list(normal_gear_kinds(session.floor_number))
+        if session_character_key(session) == CHARACTER_CHAOS:
+            loot_kinds = [kind for kind in loot_kinds if kind != "weapon"]
         gear = generate_gear(
-            random.choice(normal_gear_kinds(session.floor_number)),
+            random.choice(loot_kinds),
             boss_drop=enemy.boss,
             floor_number=session.floor_number,
         )
@@ -3373,6 +4337,16 @@ async def player_died(interaction, session, note, footer_status=""):
     cancel_bleed(session, clear=True)
     p = session_player(session)
     p.hp = 0
+    if session.is_daily:
+        save_session_player(session, p)
+        await finish_daily_challenge(
+            interaction,
+            session,
+            False,
+            note + "\n\n**눈앞이 캄캄해졌다!**",
+            footer_status=footer_status,
+        )
+        return
     session.ended = True
     persist_session(session)
 
@@ -3403,6 +4377,15 @@ async def player_died_background(interaction, session, note):
     cancel_bleed(session, clear=True)
     p = session_player(session)
     p.hp = 0
+    if session.is_daily:
+        save_session_player(session, p)
+        await finish_daily_challenge(
+            interaction,
+            session,
+            False,
+            note + "\n\n**눈앞이 캄캄해졌다!**",
+        )
+        return
     session.ended = True
     persist_session(session)
 
@@ -3459,6 +4442,14 @@ async def climb_next_floor(interaction, session):
         )
         return
 
+    if full_version_allowed(session.user_id) and not session.is_tutorial and session.floor_number >= 30:
+        p = session_player(session)
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, session, "더 내려갈 길은 없다. 진엔딩을 볼 수 있다."),
+            view=ExploreView(session),
+        )
+        return
+
     if session.is_tutorial:
         if session.tutorial_replay:
             await leave_tutorial(interaction, session)
@@ -3480,6 +4471,25 @@ async def climb_next_floor(interaction, session):
         p.highest_floor = max(p.highest_floor, 1)
         p.tutorial_completed = True
         db.save_player(p)
+
+        if full_version_allowed(session.user_id):
+            p.status = "ready"
+            p.floor_number = 1
+            p.checkpoint_floor = 0
+            p.lives_used = 0
+            db.save_player(p)
+            db.clear_run_meta(session.guild_id, session.user_id)
+            db.delete_run(session.guild_id, session.user_id)
+            old = sessions.pop(key, None)
+            if old:
+                cancel_cue(old)
+                cancel_bleed(old, clear=True)
+                old.ended = True
+            await interaction.response.edit_message(
+                embed=character_select_embed(session.user_id),
+                view=CharacterSelectView(session.guild_id, session.user_id),
+            )
+            return
 
         old = sessions.pop(key, None)
         if old:
@@ -3548,13 +4558,24 @@ async def climb_next_floor(interaction, session):
         )
         await asyncio.sleep(delay)
 
-    new_session = generate_floor(
-        session.guild_id,
-        session.user_id,
-        session.day_key,
-        p.floor_number,
-    )
-    sessions[(session.guild_id, session.user_id)] = new_session
+    if session.is_daily:
+        new_session = generate_daily_floor(
+            session.guild_id,
+            session.user_id,
+            session.day_key,
+            p.floor_number,
+            p,
+        )
+        daily_sessions[(session.guild_id, session.user_id)] = new_session
+    else:
+        new_session = generate_floor(
+            session.guild_id,
+            session.user_id,
+            session.day_key,
+            p.floor_number,
+        )
+        sessions[(session.guild_id, session.user_id)] = new_session
+    new_session.carried_pot = session.carried_pot
 
     await interaction.edit_original_response(
         embed=exploration_embed(
@@ -3567,10 +4588,13 @@ async def climb_next_floor(interaction, session):
 
 
 def magic_shop_embed(player: PlayerState, session: GameSession, note="") -> discord.Embed:
+    if session_character_key(session) == CHARACTER_CHAOS:
+        session.magic_shop_stock = [gear for gear in session.magic_shop_stock if gear.kind != "weapon"]
     persist_session(session)
     embed = discord.Embed(title=room_title(session, "마법 상점"), description=note or None)
     lines = []
     for index, gear in enumerate(session.magic_shop_stock[:3], 1):
+        discover_tool(session.user_id, gear.display_name())
         price = magic_price(gear, session.floor_number)
         lines.append(f"{index}. 🪙 {small_number(price)} — {gear.label()}")
     embed.add_field(
@@ -3737,7 +4761,8 @@ async def buy_bomb(interaction, session):
         return
 
     p.coins -= price
-    p.bombs += 1
+    bomb_gain = bomber_bomb_gain(session, 1)
+    p.bombs += bomb_gain
     room.bomb_stock -= 1
     save_session_player(session, p)
 
@@ -3746,7 +4771,7 @@ async def buy_bomb(interaction, session):
         if room.bomb_stock > 0
         else "💣 폭탄을 구입했다. **SOLD OUT**"
     )
-    footer_status = "💣 폭탄을 1개 획득했다!"
+    footer_status = f"💣 폭탄을 {bomb_gain}개 획득했다!"
 
     await interaction.response.edit_message(
         embed=shop_embed(p, session, note, footer_status=footer_status),
@@ -3785,11 +4810,12 @@ async def play_slot(interaction, session):
     if roll < 0.45:
         note = "아무것도 안 나왔다."
     elif roll < 0.68:
-        coin_gain = random.randint(2, 4) + reward_bonus
+        coin_gain = daily_coin_gain(session, random.randint(2, 4) + reward_bonus)
         p.coins += coin_gain
     elif roll < 0.80:
-        p.bombs += 1
-        footer_lines.append("💣 폭탄을 1개 획득했다!")
+        bomb_gain = bomber_bomb_gain(session, 1)
+        p.bombs += bomb_gain
+        footer_lines.append(f"💣 폭탄을 {bomb_gain}개 획득했다!")
     elif roll < 0.91:
         heal = random.randint(3, 6)
         before = p.hp
@@ -3797,7 +4823,7 @@ async def play_slot(interaction, session):
         restored = p.hp - before
         footer_lines.append(f"❤️ HP가 {restored} 회복됐다!")
     else:
-        coin_gain = random.randint(6, 10) + reward_bonus * 2
+        coin_gain = daily_coin_gain(session, random.randint(6, 10) + reward_bonus * 2)
         p.coins += coin_gain
         note = "🎰 잭팟!"
 
@@ -3843,10 +4869,13 @@ async def bomb_slot(interaction, session):
         return
 
     p.bombs -= 1
+    if not session.is_tutorial:
+        db.record_bomb_use(session.user_id)
+        discover_tool(session.user_id, "폭탄")
     room.slot_broken = True
 
     reward_bonus = max(0, (session.floor_number - 1) // 2)
-    gain = random.randint(27, 33) + reward_bonus * 2
+    gain = daily_coin_gain(session, random.randint(27, 33) + reward_bonus * 2)
     p.coins += gain
     save_session_player(session, p)
 
@@ -3863,7 +4892,6 @@ async def bomb_slot(interaction, session):
 
 SHEET_HEADERS = [
     "이름",
-    "사용자 ID",
     "현재 층",
     "최고 층",
     "남은 목숨",
@@ -3929,34 +4957,19 @@ def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str)
         worksheet.resize(cols=len(SHEET_HEADERS))
 
     last_col = gspread.utils.rowcol_to_a1(1, len(SHEET_HEADERS)).replace("1", "")
-    existing = worksheet.get_all_values()
-    existing_by_user_id: dict[str, int] = {}
-    for row_number, row in enumerate(existing[1:], start=2):
-        if len(row) >= 2 and row[1].strip():
-            existing_by_user_id[row[1].strip()] = row_number
-
-    updates = [
-        {
-            "range": f"A1:{last_col}1",
-            "values": [SHEET_HEADERS],
-        }
-    ]
-
-    next_row = max(2, len(existing) + 1)
-    for row in rows:
-        user_id = str(row[1])
-        row_number = existing_by_user_id.get(user_id)
-        if row_number is None:
-            row_number = next_row
-            next_row += 1
-        updates.append(
+    worksheet.clear()
+    worksheet.resize(rows=max(100, len(rows) + 20), cols=len(SHEET_HEADERS))
+    values = [SHEET_HEADERS, *rows]
+    end_row = len(values)
+    worksheet.batch_update(
+        [
             {
-                "range": f"A{row_number}:{last_col}{row_number}",
-                "values": [row],
+                "range": f"A1:{last_col}{end_row}",
+                "values": values,
             }
-        )
-
-    worksheet.batch_update(updates, value_input_option="RAW")
+        ],
+        value_input_option="RAW",
+    )
     worksheet.freeze(rows=1)
     return spreadsheet.url, len(rows)
 
@@ -4088,7 +5101,12 @@ async def debug_show_secret_room(interaction: discord.Interaction, kind: str):
     room.shop_stock = []
     room.bomb_stock = 0
     if kind == "shop":
-        kinds = random.sample(normal_gear_kinds(floor_number), 2)
+        pool = list(normal_gear_kinds(floor_number))
+        if session_character_key(session) == CHARACTER_CHAOS:
+            pool = [item_kind for item_kind in pool if item_kind != "weapon"]
+        kinds = random.sample(pool, min(2, len(pool)))
+        while pool and len(kinds) < 2:
+            kinds.append(random.choice(pool))
         room.shop_stock = [generate_gear(item_kind, floor_number=floor_number) for item_kind in kinds]
         room.bomb_stock = random.randint(1, 3)
     session.secret_revealed = True
@@ -4291,6 +5309,869 @@ class DebugView(discord.ui.View):
         )
 
 
+async def require_full_version(interaction: discord.Interaction) -> bool:
+    if full_version_allowed(interaction.user.id):
+        return True
+    message = "🔒 풀 버전 기능입니다. `/인증`으로 풀 버전을 해금할 수 있습니다."
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
+    return False
+
+
+class FullAccessModal(discord.ui.Modal, title="풀 버전 인증"):
+    password = discord.ui.TextInput(
+        label="비밀번호",
+        placeholder="비밀번호를 입력하세요.",
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if full_version_allowed(interaction.user.id):
+            await interaction.response.send_message("이미 풀 버전이 해금되어 있습니다.", ephemeral=True)
+            return
+        if not FULL_VERSION_PASSWORD:
+            await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않습니다.", ephemeral=True)
+            return
+        if str(self.password.value) != FULL_VERSION_PASSWORD:
+            await interaction.response.send_message("비밀번호가 맞지 않습니다.", ephemeral=True)
+            return
+        db.grant_full_access(interaction.user.id)
+        await interaction.response.send_message("✅ 풀 버전이 해금되었습니다.", ephemeral=True)
+
+
+def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC) -> discord.Embed:
+    if selected_key not in CHARACTERS or not character_unlocked(user_id, selected_key):
+        selected_key = CHARACTER_BASIC
+    info = CHARACTERS[selected_key]
+    embed = discord.Embed(
+        title="탐사 준비",
+        description=(
+            f"캐릭터 · `{info['name']}`\n"
+            f"{info['description']}\n\n"
+            f"{info['ability']}"
+        ),
+    )
+    embed.set_footer(text="해금 조건과 기록은 /도감에서 확인할 수 있다.")
+    return embed
+
+
+async def start_full_run(interaction: discord.Interaction, character_key: str):
+    if not await require_full_version(interaction):
+        return
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        return
+    if not character_unlocked(interaction.user.id, character_key):
+        await interaction.response.send_message("아직 해금되지 않은 캐릭터입니다.", ephemeral=True)
+        return
+    key = (interaction.guild_id, interaction.user.id)
+    old = sessions.pop(key, None)
+    if old:
+        cancel_cue(old)
+        cancel_bleed(old, clear=True)
+        old.ended = True
+    db.delete_run(interaction.guild_id, interaction.user.id)
+    p = db.get_player(interaction.guild_id, interaction.user.id)
+    reset_player_for_full_run(p, character_key)
+    discover_equipped_tools(p)
+    session = generate_floor(interaction.guild_id, interaction.user.id, today_key(), 1)
+    sessions[key] = session
+    await interaction.response.edit_message(
+        embed=exploration_embed(
+            p,
+            session,
+            f"`{CHARACTERS[character_key]['name']}`으로 **1층 시작!**",
+        ),
+        view=ExploreView(session),
+    )
+
+
+class CharacterSelectView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, selected_key: str = CHARACTER_BASIC):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.selected_key = selected_key if character_unlocked(user_id, selected_key) else CHARACTER_BASIC
+        options = [
+            discord.SelectOption(
+                label=CHARACTERS[key]["name"],
+                value=key,
+                description=CHARACTERS[key]["description"][:100],
+                default=key == self.selected_key,
+            )
+            for key in unlocked_character_keys(user_id)
+        ]
+        select = discord.ui.Select(
+            placeholder="캐릭터 선택",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        start = discord.ui.Button(
+            label="탐사 시작",
+            emoji="🪜",
+            style=discord.ButtonStyle.success,
+        )
+        close = discord.ui.Button(
+            label="닫기",
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def select_callback(interaction: discord.Interaction):
+            self.selected_key = select.values[0]
+            for option in select.options:
+                option.default = option.value == self.selected_key
+            await interaction.response.edit_message(
+                embed=character_select_embed(self.user_id, self.selected_key),
+                view=self,
+            )
+
+        async def start_callback(interaction: discord.Interaction):
+            await start_full_run(interaction, self.selected_key)
+
+        async def close_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        select.callback = select_callback
+        start.callback = start_callback
+        close.callback = close_callback
+        self.add_item(select)
+        self.add_item(start)
+        self.add_item(close)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+def ending_result_embed(user_id: int, character_key: str, floor_number: int, true_ending: bool, newly_unlocked):
+    title = "30층 · 진엔딩" if true_ending else "15층 · 엔딩"
+    embed = discord.Embed(
+        title=title,
+        description="**탐사를 끝냈다.**\n\n엔딩 스토리는 아직 준비 중이다.",
+    )
+    embed.add_field(
+        name="결과",
+        value=(
+            f"캐릭터 · `{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`\n"
+            f"🪜 **{floor_number}층**"
+        ),
+        inline=False,
+    )
+    if newly_unlocked:
+        names = " · ".join(f"`{CHARACTERS[key]['name']}`" for key in newly_unlocked)
+        embed.add_field(name="🔓 캐릭터 해금", value=names, inline=False)
+    embed.set_footer(text="엔딩 기록이 도감에 추가되었다.")
+    return embed
+
+
+async def finish_full_ending(interaction: discord.Interaction, session: GameSession, true_ending: bool):
+    if not await require_full_version(interaction):
+        return
+    target_floor = 30 if true_ending else 15
+    if session.is_tutorial or session.floor_number != target_floor or not session.boss_defeated or session.current != session.boss_pos:
+        await interaction.response.defer()
+        return
+    before = {key for key in CHARACTER_ORDER if character_unlocked(session.user_id, key)}
+    character_key = current_character_key(session.guild_id, session.user_id)
+    p = session_player(session)
+    db.record_ending(session.user_id, true_ending=true_ending)
+    if not true_ending:
+        db.discover(session.user_id, "ending15_character", character_key)
+    if true_ending and p.lives_used == 0:
+        db.record_flawless_true_ending(session.user_id)
+    after = {key for key in CHARACTER_ORDER if character_unlocked(session.user_id, key)}
+    newly_unlocked = [key for key in CHARACTER_ORDER if key in after and key not in before]
+    p.highest_floor = max(p.highest_floor, target_floor)
+    session.ended = True
+    persist_session(session)
+    key = (session.guild_id, session.user_id)
+    if sessions.get(key) is session:
+        sessions.pop(key, None)
+    mark_full_run_ready(p)
+    await interaction.response.edit_message(
+        embed=ending_result_embed(session.user_id, character_key, target_floor, true_ending, newly_unlocked),
+        view=StatusCloseView(session.user_id),
+    )
+
+
+def reincarnation_embed(player: PlayerState, session: GameSession, selected_kind: Optional[str] = None) -> discord.Embed:
+    embed = discord.Embed(
+        title="15층 · 환생하는 분수",
+        description="현재 장비 하나를 가지고 1층으로 돌아간다.",
+    )
+    equipped = [
+        ("weapon", "무기", player.weapon),
+        ("ring", "반지", player.ring),
+        ("shield", "방패", player.shield),
+        ("head", "투구", player.head),
+    ]
+    lines = []
+    for kind, slot, gear in equipped:
+        if gear is None:
+            continue
+        marker = "→ " if kind == selected_kind else ""
+        lines.append(f"{marker}`{slot}` · {gear.label()}")
+    embed.add_field(name="계승할 장비", value="\n".join(lines), inline=False)
+    embed.set_footer(text="한 런에 한 번만 환생할 수 있다.")
+    return embed
+
+
+async def perform_reincarnation(interaction: discord.Interaction, session: GameSession, selected_kind: str):
+    if not await require_full_version(interaction):
+        return
+    if session.floor_number != 15 or not session.boss_defeated or session.current != session.boss_pos:
+        await interaction.response.defer()
+        return
+    run_meta = db.get_run_meta(session.guild_id, session.user_id)
+    if run_meta["reincarnated"]:
+        await interaction.response.edit_message(
+            embed=exploration_embed(session_player(session), session, "이 런에서는 이미 환생했다."),
+            view=ExploreView(session),
+        )
+        return
+    p = session_player(session)
+    gear = equipped_gear(p, selected_kind)
+    if gear is None:
+        await interaction.response.send_message("계승할 장비가 없습니다.", ephemeral=True)
+        return
+    carried = Gear.from_json(gear.to_json())
+    character_key = run_meta["character_key"]
+    session.ended = True
+    persist_session(session)
+    reset_player_for_full_run(p, character_key, carried=carried)
+    discover_tool(p.user_id, carried.display_name())
+    new_session = generate_floor(session.guild_id, session.user_id, today_key(), 1)
+    sessions[(session.guild_id, session.user_id)] = new_session
+    await interaction.response.edit_message(
+        embed=exploration_embed(
+            p,
+            new_session,
+            f"⛲ `{carried.display_name()}`을(를) 가지고 **1층으로 환생했다.**",
+        ),
+        view=ExploreView(new_session),
+    )
+
+
+async def open_reincarnation(interaction: discord.Interaction, session: GameSession):
+    if not await require_full_version(interaction):
+        return
+    run_meta = db.get_run_meta(session.guild_id, session.user_id)
+    if run_meta["reincarnated"]:
+        await interaction.response.edit_message(
+            embed=exploration_embed(session_player(session), session, "이 런에서는 이미 환생했다."),
+            view=ExploreView(session),
+        )
+        return
+    p = session_player(session)
+    await interaction.response.edit_message(
+        embed=reincarnation_embed(p, session),
+        view=ReincarnationView(session),
+    )
+
+
+class ReincarnationView(OwnerView):
+    def __init__(self, session: GameSession):
+        super().__init__(session, timeout=900)
+        self.selected_kind = None
+        p = session_player(session)
+        equipped = [
+            ("weapon", "무기", p.weapon),
+            ("ring", "반지", p.ring),
+            ("shield", "방패", p.shield),
+            ("head", "투구", p.head),
+        ]
+        select = discord.ui.Select(
+            placeholder="계승할 장비 선택",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=f"{slot} · {gear.display_name()}",
+                    value=kind,
+                )
+                for kind, slot, gear in equipped
+                if gear is not None and not (session_character_key(session) == CHARACTER_CHAOS and kind == "weapon")
+            ],
+        )
+        confirm = discord.ui.Button(
+            label="환생",
+            emoji="⛲",
+            style=discord.ButtonStyle.success,
+            disabled=True,
+        )
+        cancel = discord.ui.Button(
+            label="취소",
+            style=discord.ButtonStyle.secondary,
+        )
+
+        async def select_callback(interaction: discord.Interaction):
+            self.selected_kind = select.values[0]
+            confirm.disabled = False
+            await interaction.response.edit_message(
+                embed=reincarnation_embed(session_player(self.session), self.session, self.selected_kind),
+                view=self,
+            )
+
+        async def confirm_callback(interaction: discord.Interaction):
+            if self.selected_kind is None:
+                await interaction.response.defer()
+                return
+            await perform_reincarnation(interaction, self.session, self.selected_kind)
+
+        async def cancel_callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=exploration_embed(session_player(self.session), self.session),
+                view=ExploreView(self.session),
+            )
+
+        select.callback = select_callback
+        confirm.callback = confirm_callback
+        cancel.callback = cancel_callback
+        self.add_item(select)
+        self.add_item(confirm)
+        self.add_item(cancel)
+
+
+def collection_embed(guild_id: int, user_id: int, category: str = "overview") -> discord.Embed:
+    p = db.get_player(guild_id, user_id)
+    discover_equipped_tools(p)
+    meta = db.get_user_meta(user_id)
+    monsters = monster_catalog()
+    tools = tool_catalog()
+    seen_monsters = db.get_discoveries(user_id, "monster")
+    seen_tools = db.get_discoveries(user_id, "tool")
+    unlocked = [key for key in CHARACTER_ORDER if character_unlocked(user_id, key)]
+    if category == "characters":
+        embed = discord.Embed(title="도감 · 캐릭터")
+        lines = []
+        for key in CHARACTER_ORDER:
+            info = CHARACTERS[key]
+            if key in unlocked:
+                lines.append(
+                    f"✅ `{info['name']}`\n"
+                    f"{info['description']}\n"
+                    f"{info['ability']}"
+                )
+            else:
+                lines.append(
+                    f"🔒 `???`\n"
+                    f"해금: {character_unlock_text(user_id, key)}"
+                )
+        embed.description = "\n\n".join(lines)
+        return embed
+    if category == "monsters":
+        embed = discord.Embed(title="도감 · 몬스터")
+        lines = [f"✅ {name}" if name in seen_monsters else "???" for name in monsters]
+        embed.description = "\n".join(lines) if lines else "등록된 몬스터가 없다."
+        embed.set_footer(text=f"{len(seen_monsters.intersection(monsters))}/{len(monsters)} 발견")
+        return embed
+    if category == "tools":
+        embed = discord.Embed(title="도감 · 도구")
+        lines = [f"✅ {name}" if name in seen_tools else "???" for name in tools]
+        embed.description = "\n".join(lines) if lines else "등록된 도구가 없다."
+        embed.set_footer(text=f"{len(seen_tools.intersection(tools))}/{len(tools)} 발견")
+        return embed
+    if category == "endings":
+        embed = discord.Embed(title="도감 · 엔딩")
+        ending15 = "✅" if meta["ending15_count"] > 0 else "🔒"
+        true_mark = "✅" if meta["true_ending_count"] > 0 else "🔒"
+        embed.description = (
+            f"{ending15} **15층 엔딩** · {small_number(meta['ending15_count'])}회\n"
+            f"{true_mark} **진엔딩** · {small_number(meta['true_ending_count'])}회"
+        )
+        embed.set_footer(text="엔딩 스토리와 세부 항목은 추후 추가될 예정이다.")
+        return embed
+    embed = discord.Embed(title="도감")
+    embed.description = (
+        f"🧑 캐릭터 · {len(unlocked)}/{len(CHARACTER_ORDER)}\n"
+        f"👾 몬스터 · {len(seen_monsters.intersection(monsters))}/{len(monsters)}\n"
+        f"🧰 도구 · {len(seen_tools.intersection(tools))}/{len(tools)}\n"
+        f"📖 15층 엔딩 · {small_number(meta['ending15_count'])}회\n"
+        f"📕 진엔딩 · {small_number(meta['true_ending_count'])}회"
+    )
+    return embed
+
+
+class CollectionView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, category: str = "overview"):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        select = discord.ui.Select(
+            placeholder="도감 분류",
+            options=[
+                discord.SelectOption(label="전체", value="overview", emoji="📚", default=category == "overview"),
+                discord.SelectOption(label="캐릭터", value="characters", emoji="🧑", default=category == "characters"),
+                discord.SelectOption(label="몬스터", value="monsters", emoji="👾", default=category == "monsters"),
+                discord.SelectOption(label="도구", value="tools", emoji="🧰", default=category == "tools"),
+                discord.SelectOption(label="엔딩", value="endings", emoji="📖", default=category == "endings"),
+            ],
+        )
+        close = discord.ui.Button(label="닫기", style=discord.ButtonStyle.secondary)
+
+        async def select_callback(interaction: discord.Interaction):
+            selected = select.values[0]
+            await interaction.response.edit_message(
+                embed=collection_embed(self.guild_id, self.user_id, selected),
+                view=CollectionView(self.guild_id, self.user_id, selected),
+            )
+
+        async def close_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        select.callback = select_callback
+        close.callback = close_callback
+        self.add_item(select)
+        self.add_item(close)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+def daily_profile(day_key: str):
+    parsed = datetime.strptime(day_key, "%Y-%m-%d").date()
+    ordinal = parsed.toordinal()
+    block_size = len(CHARACTER_ORDER)
+    block = ordinal // block_size
+    index = ordinal % block_size
+
+    def raw_block_order(block_number: int):
+        order = list(CHARACTER_ORDER)
+        random.Random(0xD4117 + block_number * 7919).shuffle(order)
+        return order
+
+    def block_order(block_number: int):
+        order = raw_block_order(block_number)
+        previous = raw_block_order(block_number - 1)
+        if order[0] == previous[-1] and len(order) > 1:
+            order[0], order[1] = order[1], order[0]
+        return order
+
+    order = block_order(block)
+
+    seed = int(day_key.replace("-", ""))
+    rule = random.Random(seed ^ 0x5F3759DF).choice(DAILY_RULES)
+    return {
+        "seed": seed,
+        "character_key": order[index],
+        "rule": rule,
+        "target_floor": DAILY_TARGET_FLOOR,
+    }
+
+
+def daily_rule_description(rule: str) -> str:
+    return {
+        "🏺 항아리 증가": "항아리 방이 평소보다 많이 나타난다.",
+        "🪙 코인 부족": "코인 방이 사라지고 전투 보상이 줄어든다.",
+        "💣 화약 부족": "폭탄 드롭이 줄고 비밀 상점의 폭탄 재고가 적다.",
+        "💰 비밀 상점": "비밀방은 반드시 비밀 상점으로 생성된다.",
+        "👾 강한 개체": "모든 적의 HP가 증가한다.",
+        "🚪 열린 비밀방": "비밀방이 처음부터 열려 있다.",
+    }.get(rule, "특별한 규칙이 적용된다.")
+
+
+def make_daily_player(guild_id: int, user_id: int, character_key: str, day_key: str) -> PlayerState:
+    max_hp = 10 if character_key == CHARACTER_GLASS else 20
+    return PlayerState(
+        guild_id=guild_id,
+        user_id=user_id,
+        coins=3,
+        bombs=10 if character_key == CHARACTER_BOMBER else 2,
+        max_hp=max_hp,
+        hp=max_hp,
+        weapon=Gear.from_json(CHAOS_SWORD.to_json()) if character_key == CHARACTER_CHAOS else Gear.from_json(START_WEAPON.to_json()),
+        ring=None,
+        shield=Gear.from_json(START_SHIELD.to_json()),
+        head=None,
+        last_day=day_key,
+        status="daily",
+        floor_number=1,
+        highest_floor=1,
+        checkpoint_floor=0,
+        lives_used=0,
+        tutorial_completed=True,
+    )
+
+
+def apply_daily_rule(session: GameSession):
+    rule = session.daily_rule
+    rooms = [room for pos, room in session.rooms.items() if pos not in ((0, 0), session.boss_pos, session.secret_pos)]
+    if rule == "🏺 항아리 증가":
+        candidates = [room for room in rooms if room.kind in ("normal", "coin", "empty")]
+        for room in candidates[:2]:
+            room.kind = "pot"
+            room.enemy = None
+            room.cleared = False
+    elif rule == "🪙 코인 부족":
+        for room in rooms:
+            if room.kind == "coin":
+                room.kind = "empty"
+    elif rule == "💣 화약 부족":
+        secret = session.rooms[session.secret_pos]
+        if secret.kind == "shop":
+            secret.bomb_stock = min(secret.bomb_stock, 1)
+    elif rule == "💰 비밀 상점":
+        secret = session.rooms[session.secret_pos]
+        secret.kind = "shop"
+        kinds = list(normal_gear_kinds(session.floor_number))
+        if session_character_key(session) == CHARACTER_CHAOS:
+            kinds = [kind for kind in kinds if kind != "weapon"]
+        picks = random.sample(kinds, min(2, len(kinds)))
+        while kinds and len(picks) < 2:
+            picks.append(random.choice(kinds))
+        secret.shop_stock = [generate_gear(kind, floor_number=session.floor_number) for kind in picks]
+        secret.bomb_stock = random.randint(1, 3)
+        secret.slot_uses = 0
+        secret.slot_broken = False
+    elif rule == "👾 강한 개체":
+        for room in session.rooms.values():
+            if room.enemy is not None:
+                bonus = max(1, math.ceil(room.enemy.max_hp * 0.25))
+                room.enemy.max_hp += bonus
+                room.enemy.hp += bonus
+    elif rule == "🚪 열린 비밀방":
+        session.secret_revealed = True
+
+
+def generate_daily_floor(guild_id: int, user_id: int, day_key: str, floor_number: int, player: PlayerState) -> GameSession:
+    profile = daily_profile(day_key)
+    rng_state = random.getstate()
+    try:
+        random.seed(profile["seed"] * 1009 + floor_number * 9176)
+        session = generate_floor(
+            guild_id,
+            user_id,
+            day_key,
+            floor_number,
+            character_key=profile["character_key"],
+        )
+        session.mode = "daily"
+        session.character_key_override = profile["character_key"]
+        session.daily_rule = profile["rule"]
+        session.temp_player = player
+        apply_daily_rule(session)
+        return session
+    finally:
+        random.setstate(rng_state)
+
+
+def daily_coin_gain(session: GameSession, amount: int) -> int:
+    if session.is_daily and session.daily_rule == "🪙 코인 부족":
+        return max(1, math.floor(amount * 0.70))
+    return amount
+
+
+def daily_ranking_lines(guild: Optional[discord.Guild], day_key: str, limit: int = 10):
+    if guild is None:
+        return ["랭킹을 불러올 수 없다."]
+    rows = db.daily_ranking(guild.id, day_key, limit)
+    if not rows:
+        return ["아직 기록이 없다."]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    lines = []
+    for rank, (user_id, floor_number, coins, completed, finished) in enumerate(rows, 1):
+        member = guild.get_member(int(user_id))
+        name = member.display_name if member else f"<@{user_id}>"
+        rank_mark = medals.get(rank, f"{rank}.")
+        result = "✅ **10층 클리어**" if completed else f"🪜 **{floor_number}층**"
+        if not finished and not completed:
+            result += " · 진행 중"
+        lines.append(f"{rank_mark} {name} — {result} · 🪙 {small_number(coins)}")
+    return lines
+
+
+def daily_embed(day_key: str, user_id: int, guild: Optional[discord.Guild] = None) -> discord.Embed:
+    profile = daily_profile(day_key)
+    character_key = profile["character_key"]
+    character = CHARACTERS[character_key]["name"] if character_unlocked(user_id, character_key) else "???"
+    record = db.get_daily_record(guild.id, day_key, user_id) if guild is not None else None
+    if record is None:
+        state = "아직 도전하지 않았다."
+    elif record["completed"]:
+        state = f"✅ **10층 클리어** · 🪙 {small_number(record['coins'])}"
+    elif record["finished"]:
+        state = f"도전 종료 · 🪜 **{record['floor_number']}층** · 🪙 {small_number(record['coins'])}"
+    else:
+        state = f"진행 중 · 🪜 **{record['floor_number']}층** · 🪙 {small_number(record['coins'])}"
+
+    embed = discord.Embed(
+        title=f"오늘의 탐사 · {day_key[5:].replace('-', '/')}",
+        description=state,
+    )
+    embed.add_field(name="오늘의 캐릭터", value=f"`{character}`", inline=False)
+    embed.add_field(
+        name="오늘의 규칙",
+        value=f"`{profile['rule']}`\n{daily_rule_description(profile['rule'])}",
+        inline=False,
+    )
+    embed.add_field(name="목표", value="🪜 **10층**", inline=False)
+    embed.add_field(name="오늘의 랭킹", value="\n".join(daily_ranking_lines(guild, day_key)), inline=False)
+    embed.set_footer(text="하루 한 번 도전할 수 있다. 날짜가 바뀌면 캐릭터와 규칙도 바뀐다.")
+    return embed
+
+
+async def finish_daily_challenge(interaction: discord.Interaction, session: GameSession, completed: bool, note: str = "", footer_status: str = ""):
+    p = session_player(session)
+    session.ended = True
+    cancel_cue(session)
+    cancel_bleed(session, clear=True)
+    db.record_daily_progress(
+        session.guild_id,
+        session.day_key,
+        session.user_id,
+        session.floor_number,
+        p.coins,
+        session_character_key(session),
+        session.daily_rule,
+        completed=completed,
+        finished=True,
+    )
+    db.delete_daily_run(session.guild_id, session.user_id)
+    daily_sessions.pop((session.guild_id, session.user_id), None)
+    title = "오늘의 탐사 · 클리어" if completed else "오늘의 탐사 · 종료"
+    description = note or ("10층의 마지막 적을 쓰러뜨렸다." if completed else "이번 도전은 여기까지다.")
+    embed = discord.Embed(title=title, description=description)
+    embed.add_field(
+        name="기록",
+        value=(
+            f"{'✅ **10층 클리어**' if completed else f'🪜 **{session.floor_number}층**'}\n"
+            f"🪙 {small_number(p.coins)}"
+        ),
+        inline=False,
+    )
+    if footer_status:
+        embed.set_footer(text=footer_status)
+    await edit_interaction_message(
+        interaction,
+        embed=embed,
+        view=DailyResultView(session.guild_id, session.user_id, session.day_key),
+    )
+
+
+class DailyResultView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, day_key: str):
+        super().__init__(timeout=600)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.day_key = day_key
+        ranking = discord.ui.Button(label="랭킹", emoji="🏆", style=discord.ButtonStyle.secondary)
+        close = discord.ui.Button(label="닫기", style=discord.ButtonStyle.secondary)
+
+        async def ranking_callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=daily_embed(self.day_key, self.user_id, interaction.guild),
+                view=DailyLobbyView(self.guild_id, self.user_id, self.day_key),
+            )
+
+        async def close_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        ranking.callback = ranking_callback
+        close.callback = close_callback
+        self.add_item(ranking)
+        self.add_item(close)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+class DailyLobbyView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, day_key: str):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.day_key = day_key
+        record = db.get_daily_record(guild_id, day_key, user_id)
+        key = (guild_id, user_id)
+        active = daily_sessions.get(key)
+        if active is not None and active.day_key != day_key:
+            cancel_cue(active)
+            cancel_bleed(active, clear=True)
+            active.ended = True
+            daily_sessions.pop(key, None)
+            active = None
+        if active is None:
+            active = load_persisted_daily_session(guild_id, user_id, day_key)
+        if active is not None:
+            daily_sessions[key] = active
+        if record is None or (record is not None and not record["finished"]):
+            start = discord.ui.Button(
+                label="계속" if active is not None else "시작",
+                emoji="▶️",
+                style=discord.ButtonStyle.success,
+            )
+
+            async def start_callback(interaction: discord.Interaction):
+                await start_or_continue_daily(interaction, self.day_key)
+
+            start.callback = start_callback
+            self.add_item(start)
+        close = discord.ui.Button(label="닫기", style=discord.ButtonStyle.secondary)
+
+        async def close_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        close.callback = close_callback
+        self.add_item(close)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+async def start_or_continue_daily(interaction: discord.Interaction, day_key: str):
+    if interaction.guild_id is None or day_key != today_key():
+        await interaction.response.edit_message(
+            embed=daily_embed(today_key(), interaction.user.id, interaction.guild),
+            view=DailyLobbyView(interaction.guild_id, interaction.user.id, today_key()) if interaction.guild_id else None,
+        )
+        return
+    guild_id = interaction.guild_id
+    user_id = interaction.user.id
+    record = db.get_daily_record(guild_id, day_key, user_id)
+    if record is not None and record["finished"]:
+        await interaction.response.edit_message(
+            embed=daily_embed(day_key, user_id, interaction.guild),
+            view=DailyLobbyView(guild_id, user_id, day_key),
+        )
+        return
+    key = (guild_id, user_id)
+    session = daily_sessions.get(key)
+    if session is None or session.ended or session.day_key != day_key:
+        session = load_persisted_daily_session(guild_id, user_id, day_key)
+    if session is None:
+        profile = daily_profile(day_key)
+        player = make_daily_player(guild_id, user_id, profile["character_key"], day_key)
+        session = generate_daily_floor(guild_id, user_id, day_key, 1, player)
+        db.record_daily_progress(
+            guild_id,
+            day_key,
+            user_id,
+            1,
+            player.coins,
+            profile["character_key"],
+            profile["rule"],
+        )
+    daily_sessions[key] = session
+    p = session_player(session)
+    room = session.room()
+    if room.kind in ("normal", "boss") and not room.cleared:
+        session.phase = "battle_ready"
+        embed = combat_embed(p, session, "")
+        view = BattleStartView(session)
+    elif room.kind == "shop":
+        embed = shop_embed(p, session)
+        view = ShopView(session)
+    elif room.kind == "slot":
+        embed = slot_embed(p, session)
+        view = SlotView(session)
+    else:
+        embed = exploration_embed(p, session, "**오늘의 탐사를 시작한다.**" if session.floor_number == 1 and session.current == (0, 0) else "")
+        view = ExploreView(session)
+    await interaction.response.edit_message(embed=embed, view=view)
+
+
+def forfeit_embed(player: PlayerState, character_key: str) -> discord.Embed:
+    embed = discord.Embed(
+        title="탐사 포기",
+        description="현재 탐사를 포기할까?",
+    )
+    embed.add_field(
+        name="현재 런",
+        value=(
+            f"캐릭터 · `{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`\n"
+            f"🪜 **{player.floor_number}층** · 👑 {small_number(player.highest_floor)}"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="현재 런의 진행은 종료된다. 누적 도감과 해금 기록은 유지된다.")
+    return embed
+
+
+class ForfeitConfirmView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        confirm = discord.ui.Button(label="포기", style=discord.ButtonStyle.danger)
+        cancel = discord.ui.Button(label="취소", style=discord.ButtonStyle.secondary)
+
+        async def confirm_callback(interaction: discord.Interaction):
+            if not await require_full_version(interaction):
+                return
+            p = db.get_player(self.guild_id, self.user_id)
+            character_key = current_character_key(self.guild_id, self.user_id)
+            key = (self.guild_id, self.user_id)
+            old = sessions.pop(key, None)
+            if old:
+                cancel_cue(old)
+                cancel_bleed(old, clear=True)
+                old.ended = True
+            mark_full_run_ready(p)
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="탐사 포기",
+                    description=(
+                        f"`{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`의 탐사를 포기했다.\n"
+                        "`/게임`으로 새 탐사를 시작할 수 있다."
+                    ),
+                ),
+                view=StatusCloseView(self.user_id),
+            )
+
+        async def cancel_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        confirm.callback = confirm_callback
+        cancel.callback = cancel_callback
+        self.add_item(confirm)
+        self.add_item(cancel)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
 intents = discord.Intents.default()
 
 
@@ -4300,6 +6181,17 @@ class ShapeGameBot(commands.Bot):
 
 
 bot = ShapeGameBot(command_prefix="!", intents=intents)
+
+
+@bot.tree.command(name="인증", description="풀 버전 비밀번호를 입력합니다.")
+async def full_version_auth(interaction: discord.Interaction):
+    if full_version_allowed(interaction.user.id):
+        await interaction.response.send_message("이미 풀 버전이 해금되어 있습니다.", ephemeral=True)
+        return
+    if not FULL_VERSION_PASSWORD:
+        await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않습니다.", ephemeral=True)
+        return
+    await interaction.response.send_modal(FullAccessModal())
 
 
 @bot.tree.command(name="디버그", description="개발자용 테스트 패널을 엽니다.")
@@ -4407,8 +6299,15 @@ async def game(interaction: discord.Interaction):
         return
 
 
+    if full_version_allowed(user_id) and p.status == "ready":
+        await interaction.response.send_message(
+            embed=character_select_embed(user_id),
+            view=CharacterSelectView(guild_id, user_id),
+            ephemeral=True,
+        )
+        return
+
     if p.last_day != today:
-        db.delete_run(guild_id, user_id)
         db.delete_run(guild_id, user_id)
         old = sessions.pop(key, None)
         if old:
@@ -4553,6 +6452,54 @@ async def game(interaction: discord.Interaction):
             f"**{p.floor_number}층 탐색을 재개했다!**",
         ),
         view=ExploreView(session),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="도감", description="풀 버전 도감을 확인합니다.")
+async def collection_command(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        return
+    if not await require_full_version(interaction):
+        return
+    await interaction.response.send_message(
+        embed=collection_embed(interaction.guild_id, interaction.user.id),
+        view=CollectionView(interaction.guild_id, interaction.user.id),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="데일리", description="오늘의 데일리 챌린지를 확인합니다.")
+async def daily_command(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        return
+    if not await require_full_version(interaction):
+        return
+    day_key = today_key()
+    await interaction.response.send_message(
+        embed=daily_embed(day_key, interaction.user.id, interaction.guild),
+        view=DailyLobbyView(interaction.guild_id, interaction.user.id, day_key),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="포기", description="현재 풀 버전 탐사를 포기합니다.")
+async def forfeit_command(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        return
+    if not await require_full_version(interaction):
+        return
+    p = db.get_player(interaction.guild_id, interaction.user.id)
+    if p.status not in ("playing", "dead"):
+        await interaction.response.send_message("진행 중인 탐사가 없습니다.", ephemeral=True)
+        return
+    character_key = current_character_key(interaction.guild_id, interaction.user.id)
+    await interaction.response.send_message(
+        embed=forfeit_embed(p, character_key),
+        view=ForfeitConfirmView(interaction.guild_id, interaction.user.id),
         ephemeral=True,
     )
 
@@ -4780,7 +6727,7 @@ async def sheet_update(interaction: discord.Interaction):
                 user = await bot.fetch_user(p.user_id)
                 name = user.global_name or user.name
             except discord.HTTPException:
-                name = str(p.user_id)
+                name = "알 수 없는 플레이어"
 
         lives = (
             MAX_DAILY_LIVES
@@ -4790,7 +6737,6 @@ async def sheet_update(interaction: discord.Interaction):
         sheet_rows.append(
             [
                 name,
-                str(p.user_id),
                 p.floor_number,
                 p.highest_floor,
                 lives,
