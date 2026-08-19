@@ -4340,7 +4340,7 @@ def death_description(player: PlayerState, note: str) -> str:
     left = remaining_lives(player)
     if left <= 0:
         if full_version_allowed(player.user_id):
-            return note + "\n\n**눈앞이 캄캄해졌다!**\n`/게임`으로 새 게임을 시작할 수 있다."
+            return note + "\n\n**눈앞이 캄캄해졌다!**\n`/게임`으로 새 탐사를 시작할 수 있다."
         return note + "\n\n**눈앞이 캄캄해졌다!**\n오늘은 더 이상 플레이할 수 없다."
     return (
         note
@@ -6234,7 +6234,7 @@ def forfeit_embed(player: PlayerState, character_key: str) -> discord.Embed:
         ),
         inline=False,
     )
-    embed.set_footer(text="현재 런의 진행은 종료된다. 누적 도감과 해금 기록은 유지된다.")
+    embed.set_footer(text="도감과 해금 기록은 유지된다.")
     return embed
 
 
@@ -6611,7 +6611,7 @@ async def daily_command(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="포기", description="현재 풀 버전 탐사를 포기합니다.")
+@bot.tree.command(name="포기", description="현재 탐사를 포기합니다.")
 async def forfeit_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
