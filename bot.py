@@ -130,48 +130,48 @@ CHARACTER_CHAOS = "chaos"
 CHARACTERS = {
     CHARACTER_BASIC: {
         "name": "기본",
-        "description": "특별한 능력이 없다.",
-        "ability": "가장 평범한 탐사자다.",
+        "description": "별다른 능력이 없다.",
+        "ability": "",
     },
     CHARACTER_VAMPIRE: {
         "name": "흡혈",
-        "description": "피를 흘리게 하고 상처를 회복하는 탐사자다.",
-        "ability": "직접 공격으로 출혈을 내는 데 성공하면 50% 확률로 HP를 1 회복한다.",
+        "description": "출혈을 내면 가끔 HP를 회복한다.",
+        "ability": "",
     },
     CHARACTER_BOMBER: {
         "name": "폭발광",
-        "description": "폭발물을 유난히 잘 다루는 탐사자다.",
-        "ability": "폭탄 10개로 시작한다. 폭탄 피해가 2 증가하고 폭탄 수급량이 늘어난다.",
+        "description": "폭탄을 더 잘 다룬다.",
+        "ability": "",
     },
     CHARACTER_SCRAPPER: {
         "name": "고물상",
-        "description": "버려지는 장비에서도 쓸모를 찾아낸다.",
-        "ability": "전리품 장비를 버리면 가치에 따라 코인을 얻는다.",
+        "description": "버린 장비로 코인을 챙긴다.",
+        "ability": "",
     },
     CHARACTER_POT_THROWER: {
         "name": "항아리 투척꾼",
-        "description": "항아리를 깨는 대신 들고 다닐 수 있다.",
-        "ability": "항아리 하나를 보관해 전투에서 던질 수 있다. 던진 항아리는 폭탄과 같은 피해를 주며 항아리의 피해를 받지 않는다.",
+        "description": "항아리를 주워 던질 수 있다.",
+        "ability": "",
     },
     CHARACTER_TOMB_RAIDER: {
         "name": "도굴꾼",
-        "description": "숨겨진 공간의 기척을 알아챈다.",
-        "ability": "층에 들어설 때부터 보스의 위치를 알고 비밀방이 열려 있다.",
+        "description": "보스와 비밀방을 쉽게 찾는다.",
+        "ability": "",
     },
     CHARACTER_PERFECTIONIST: {
         "name": "완벽주의자",
-        "description": "완벽한 타이밍만을 노린다.",
-        "ability": "PERFECT 공격과 반격이 더 강하다. 대신 GOOD 공격의 피해가 감소한다.",
+        "description": "PERFECT에 강하고 GOOD에 약하다.",
+        "ability": "",
     },
     CHARACTER_GLASS: {
         "name": "유리몸",
-        "description": "조금만 맞아도 위험하지만 공격은 강하다.",
-        "ability": "기본 최대 HP가 10이 되는 대신 직접 공격 피해가 3 증가한다.",
+        "description": "HP가 낮은 대신 공격이 강하다.",
+        "ability": "",
     },
     CHARACTER_CHAOS: {
         "name": "혼돈",
-        "description": "다른 무기를 사용할 수 없는 변칙적인 탐사자다.",
-        "ability": "혼돈의 검으로 시작한다. 직접 공격이 적중할 때마다 검의 효과가 무작위로 발동한다.",
+        "description": "혼돈의 검 효과가 매번 달라진다.",
+        "ability": "",
     },
 }
 CHARACTER_ORDER = (
@@ -5548,8 +5548,7 @@ def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC, fa
         description=(
             f"캐릭터 · `{info['name']}`\n"
             f"페이크 · `{'사용' if fake_enabled else '사용 안 함'}`\n"
-            f"{info['description']}\n\n"
-            f"{info['ability']}"
+            f"{info['description']}"
         ),
     )
     embed.set_footer(text="해금 조건과 기록은 /도감에서 확인할 수 있다.")
@@ -5886,8 +5885,7 @@ def collection_embed(guild_id: int, user_id: int, category: str = "overview") ->
             if key in unlocked:
                 lines.append(
                     f"✅ `{info['name']}`\n"
-                    f"{info['description']}\n"
-                    f"{info['ability']}"
+                    f"{info['description']}"
                 )
             else:
                 lines.append(
