@@ -179,12 +179,8 @@ CHARACTER_ORDER = (
     CHARACTER_CHAOS,
 )
 DAILY_RULES = (
-    "🏺 항아리 증가",
-    "🪙 코인 부족",
-    "💣 화약 부족",
-    "💰 비밀 상점",
-    "👾 강한 개체",
-    "🚪 열린 비밀방",
+    "맵 크기 2배",
+    "목숨 1개",
 )
 ENEMY_MODIFIERS = (
     "졸린",
@@ -551,6 +547,7 @@ class GameSession:
     mode: str = "main"
     character_key_override: Optional[str] = None
     daily_rule: str = ""
+    fake_enabled: bool = True
 
     @property
     def is_daily(self) -> bool:
@@ -661,6 +658,7 @@ class Database:
                     user_id INTEGER NOT NULL,
                     character_key TEXT NOT NULL DEFAULT 'basic',
                     reincarnated INTEGER NOT NULL DEFAULT 0,
+                    fake_enabled INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (guild_id, user_id)
                 )
                 """
@@ -694,6 +692,12 @@ class Database:
                 )
                 """
             )
+            run_meta_columns = {
+                row[1] for row in con.execute("PRAGMA table_info(run_meta)").fetchall()
+            }
+            if "fake_enabled" not in run_meta_columns:
+                con.execute("ALTER TABLE run_meta ADD COLUMN fake_enabled INTEGER NOT NULL DEFAULT 1")
+
             user_meta_columns = {
                 row[1] for row in con.execute("PRAGMA table_info(user_meta)").fetchall()
             }
@@ -873,7 +877,7 @@ class Database:
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id, user_id) DO UPDATE SET
                     day_key=excluded.day_key,
-                    floor_number=excluded.floor_number,
+                    floor_number=MAX(daily_records.floor_number, excluded.floor_number),
                     state_json=excluded.state_json
                 """,
                 (guild_id, user_id, day_key, floor_number, state_json),
@@ -1119,27 +1123,28 @@ class Database:
     def get_run_meta(self, guild_id: int, user_id: int):
         with self.connect() as con:
             row = con.execute(
-                "SELECT character_key, reincarnated FROM run_meta WHERE guild_id=? AND user_id=?",
+                "SELECT character_key, reincarnated, fake_enabled FROM run_meta WHERE guild_id=? AND user_id=?",
                 (guild_id, user_id),
             ).fetchone()
         if row is None:
-            return {"character_key": CHARACTER_BASIC, "reincarnated": False}
+            return {"character_key": CHARACTER_BASIC, "reincarnated": False, "fake_enabled": True}
         character_key = str(row[0]) if str(row[0]) in CHARACTERS else CHARACTER_BASIC
-        return {"character_key": character_key, "reincarnated": bool(row[1])}
+        return {"character_key": character_key, "reincarnated": bool(row[1]), "fake_enabled": bool(row[2])}
 
-    def set_run_meta(self, guild_id: int, user_id: int, character_key: str, reincarnated: bool):
+    def set_run_meta(self, guild_id: int, user_id: int, character_key: str, reincarnated: bool, fake_enabled: bool = True):
         if character_key not in CHARACTERS:
             character_key = CHARACTER_BASIC
         with self.connect() as con:
             con.execute(
                 """
-                INSERT INTO run_meta (guild_id, user_id, character_key, reincarnated)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO run_meta (guild_id, user_id, character_key, reincarnated, fake_enabled)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id, user_id) DO UPDATE SET
                     character_key=excluded.character_key,
-                    reincarnated=excluded.reincarnated
+                    reincarnated=excluded.reincarnated,
+                    fake_enabled=excluded.fake_enabled
                 """,
-                (guild_id, user_id, character_key, int(reincarnated)),
+                (guild_id, user_id, character_key, int(reincarnated), int(fake_enabled)),
             )
             con.commit()
 
@@ -1386,7 +1391,7 @@ def discover_equipped_tools(player: PlayerState):
         discover_tool(player.user_id, "폭탄")
 
 
-def reset_player_for_full_run(player: PlayerState, character_key: str, carried: Optional[Gear] = None):
+def reset_player_for_full_run(player: PlayerState, character_key: str, carried: Optional[Gear] = None, fake_enabled: bool = True):
     player.coins = 3
     player.bombs = 10 if character_key == CHARACTER_BOMBER else 2
     player.max_hp = 10 if character_key == CHARACTER_GLASS else 20
@@ -1404,7 +1409,7 @@ def reset_player_for_full_run(player: PlayerState, character_key: str, carried: 
     player.lives_used = 0
     player.highest_floor = max(player.highest_floor, 1)
     db.save_player(player)
-    db.set_run_meta(player.guild_id, player.user_id, character_key, carried is not None)
+    db.set_run_meta(player.guild_id, player.user_id, character_key, carried is not None, fake_enabled)
 
 
 def mark_full_run_ready(player: PlayerState):
@@ -1582,6 +1587,7 @@ def session_state(session: GameSession):
         "mode": session.mode,
         "character_key_override": session.character_key_override,
         "daily_rule": session.daily_rule,
+        "fake_enabled": session.fake_enabled,
         "temp_player": player_state_data(session.temp_player) if session.temp_player is not None else None,
     }
 
@@ -1627,6 +1633,7 @@ def session_from_state(guild_id: int, user_id: int, raw: str):
         mode=str(data.get("mode", "main")),
         character_key_override=data.get("character_key_override"),
         daily_rule=str(data.get("daily_rule", "")),
+        fake_enabled=bool(data.get("fake_enabled", True)),
         temp_player=player_from_state_data(data.get("temp_player")),
     )
     room = session.room()
@@ -1718,6 +1725,12 @@ def remaining_lives(player: PlayerState) -> int:
 def life_hearts(player: PlayerState) -> str:
     lives = max(0, min(MAX_DAILY_LIVES, remaining_lives(player)))
     return "❤️" * lives + "🖤" * (MAX_DAILY_LIVES - lives)
+
+
+def session_life_hearts(player: PlayerState, session: GameSession) -> str:
+    if session.is_daily and session.daily_rule == "목숨 1개":
+        return "❤️" if remaining_lives(player) > 0 else "🖤"
+    return life_hearts(player)
 
 
 def checkpoint_start_floor(player: PlayerState) -> int:
@@ -2028,14 +2041,21 @@ def bfs_distances(positions, start=(0, 0)):
     return distance
 
 
-def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1, character_key: Optional[str] = None) -> GameSession:
+def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1, character_key: Optional[str] = None, fake_enabled: Optional[bool] = None, room_count: Optional[int] = None) -> GameSession:
     effective_character = character_key if character_key in CHARACTERS else (
         current_character_key(guild_id, user_id)
         if full_version_allowed(user_id)
         else CHARACTER_BASIC
     )
+    effective_fake = (
+        bool(fake_enabled)
+        if fake_enabled is not None
+        else (db.get_run_meta(guild_id, user_id)["fake_enabled"] if full_version_allowed(user_id) and character_key is None else True)
+    )
     positions = {(0, 0)}
-    while len(positions) < 8:
+    selected_room_count = room_count if room_count is not None else (16 if random.random() < 0.25 else 8)
+    target_room_count = max(2, int(selected_room_count))
+    while len(positions) < target_room_count:
         anchor = random.choice(tuple(positions))
         delta = random.choice(tuple(DIRECTIONS.values()))
         positions.add(add_pos(anchor, delta))
@@ -2115,6 +2135,7 @@ def generate_floor(guild_id: int, user_id: int, day: str, floor_number: int = 1,
         secret_direction=secret_direction,
         secret_revealed=effective_character == CHARACTER_TOMB_RAIDER,
         character_key_override=character_key if character_key in CHARACTERS else None,
+        fake_enabled=effective_fake,
     )
 
 
@@ -2594,7 +2615,7 @@ def player_embed(player: PlayerState, session: GameSession, title: str, colour=N
         f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
         else (
-            f"❤️ · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+            f"{session_life_hearts(player, session)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
             if session.is_daily
             else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         )
@@ -2654,7 +2675,7 @@ def exploration_embed(player, session, note="", footer_status=""):
         f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         if session.is_tutorial
         else (
-            f"❤️ · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+            f"{session_life_hearts(player, session)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
             if session.is_daily
             else f"{life_hearts(player)} · 🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
         )
@@ -3578,7 +3599,7 @@ async def cue_sequence(interaction, session, kind, token):
             if session.cue_token != token or session.ended or session.phase != kind:
                 return
 
-            is_fake = random.random() < 0.48
+            is_fake = session.fake_enabled and random.random() < 0.48
             session.cue_state = "fake" if is_fake else "waiting"
             line = random.choice(fakeouts if is_fake else flavor)
             p = session_player(session)
@@ -4228,8 +4249,6 @@ async def enemy_defeated(interaction, session, combat_note):
     p.coins += coins
 
     bomb_chance = (0.65 if enemy.boss else 0.45) if session_character_key(session) == CHARACTER_BOMBER else (0.40 if enemy.boss else 0.25)
-    if session.is_daily and session.daily_rule == "💣 화약 부족":
-        bomb_chance *= 0.35
     bomb_gain = bomber_bomb_gain(session, 1) if random.random() < bomb_chance else 0
     p.bombs += bomb_gain
     save_session_player(session, p)
@@ -4247,12 +4266,11 @@ async def enemy_defeated(interaction, session, combat_note):
     if enemy.boss:
         session.boss_defeated = True
         if session.floor_number % 5 == 0 and not session.is_tutorial:
-            if not session.is_daily:
-                previous_checkpoint = p.checkpoint_floor
-                p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
-                save_session_player(session, p)
-                if p.checkpoint_floor > previous_checkpoint:
-                    reward_lines.append("📝 체크포인트가 기록되었다.")
+            previous_checkpoint = p.checkpoint_floor
+            p.checkpoint_floor = max(p.checkpoint_floor, session.floor_number)
+            save_session_player(session, p)
+            if p.checkpoint_floor > previous_checkpoint:
+                reward_lines.append("📝 체크포인트가 기록되었다.")
             if not (session.is_daily and session.floor_number >= DAILY_TARGET_FLOOR):
                 prepare_magic_shop(session)
 
@@ -4338,13 +4356,44 @@ async def player_died(interaction, session, note, footer_status=""):
     p = session_player(session)
     p.hp = 0
     if session.is_daily:
+        p.lives_used += 1
+        if remaining_lives(p) <= 0:
+            save_session_player(session, p)
+            await finish_daily_challenge(
+                interaction,
+                session,
+                False,
+                note + "\n\n**눈앞이 캄캄해졌다!**",
+                footer_status=footer_status,
+            )
+            return
+        p.hp = player_max_hp(p)
+        p.status = "daily"
+        restart_floor = checkpoint_start_floor(p)
+        p.floor_number = restart_floor
         save_session_player(session, p)
-        await finish_daily_challenge(
-            interaction,
-            session,
-            False,
-            note + "\n\n**눈앞이 캄캄해졌다!**",
-            footer_status=footer_status,
+        new_session = generate_daily_floor(
+            session.guild_id,
+            session.user_id,
+            session.day_key,
+            restart_floor,
+            p,
+        )
+        new_session.carried_pot = session.carried_pot
+        daily_sessions[(session.guild_id, session.user_id)] = new_session
+        restart_note = (
+            note
+            + "\n\n**눈앞이 캄캄해졌다!**"
+            + (
+                "\n**체크포인트로 돌아왔다.**"
+                if p.checkpoint_floor > 0
+                else "\n1층부터 다시 시작한다."
+            )
+            + f"\n남은 목숨 **{remaining_lives(p)}/{MAX_DAILY_LIVES}**"
+        )
+        await interaction.response.edit_message(
+            embed=exploration_embed(p, new_session, restart_note, footer_status=footer_status),
+            view=ExploreView(new_session),
         )
         return
     session.ended = True
@@ -4378,12 +4427,43 @@ async def player_died_background(interaction, session, note):
     p = session_player(session)
     p.hp = 0
     if session.is_daily:
+        p.lives_used += 1
+        if remaining_lives(p) <= 0:
+            save_session_player(session, p)
+            await finish_daily_challenge(
+                interaction,
+                session,
+                False,
+                note + "\n\n**눈앞이 캄캄해졌다!**",
+            )
+            return
+        p.hp = player_max_hp(p)
+        p.status = "daily"
+        restart_floor = checkpoint_start_floor(p)
+        p.floor_number = restart_floor
         save_session_player(session, p)
-        await finish_daily_challenge(
-            interaction,
-            session,
-            False,
-            note + "\n\n**눈앞이 캄캄해졌다!**",
+        new_session = generate_daily_floor(
+            session.guild_id,
+            session.user_id,
+            session.day_key,
+            restart_floor,
+            p,
+        )
+        new_session.carried_pot = session.carried_pot
+        daily_sessions[(session.guild_id, session.user_id)] = new_session
+        restart_note = (
+            note
+            + "\n\n**눈앞이 캄캄해졌다!**"
+            + (
+                "\n**체크포인트로 돌아왔다.**"
+                if p.checkpoint_floor > 0
+                else "\n1층부터 다시 시작한다."
+            )
+            + f"\n남은 목숨 **{remaining_lives(p)}/{MAX_DAILY_LIVES}**"
+        )
+        await interaction.edit_original_response(
+            embed=exploration_embed(p, new_session, restart_note),
+            view=ExploreView(new_session),
         )
         return
     session.ended = True
@@ -5341,7 +5421,7 @@ class FullAccessModal(discord.ui.Modal, title="풀 버전 인증"):
         await interaction.response.send_message("✅ 풀 버전이 해금되었습니다.", ephemeral=True)
 
 
-def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC) -> discord.Embed:
+def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC, fake_enabled: bool = True) -> discord.Embed:
     if selected_key not in CHARACTERS or not character_unlocked(user_id, selected_key):
         selected_key = CHARACTER_BASIC
     info = CHARACTERS[selected_key]
@@ -5349,6 +5429,7 @@ def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC) ->
         title="탐사 준비",
         description=(
             f"캐릭터 · `{info['name']}`\n"
+            f"페이크 · `{'사용' if fake_enabled else '사용 안 함'}`\n"
             f"{info['description']}\n\n"
             f"{info['ability']}"
         ),
@@ -5357,7 +5438,7 @@ def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC) ->
     return embed
 
 
-async def start_full_run(interaction: discord.Interaction, character_key: str):
+async def start_full_run(interaction: discord.Interaction, character_key: str, fake_enabled: bool):
     if not await require_full_version(interaction):
         return
     if interaction.guild_id is None:
@@ -5374,7 +5455,7 @@ async def start_full_run(interaction: discord.Interaction, character_key: str):
         old.ended = True
     db.delete_run(interaction.guild_id, interaction.user.id)
     p = db.get_player(interaction.guild_id, interaction.user.id)
-    reset_player_for_full_run(p, character_key)
+    reset_player_for_full_run(p, character_key, fake_enabled=fake_enabled)
     discover_equipped_tools(p)
     session = generate_floor(interaction.guild_id, interaction.user.id, today_key(), 1)
     sessions[key] = session
@@ -5389,11 +5470,12 @@ async def start_full_run(interaction: discord.Interaction, character_key: str):
 
 
 class CharacterSelectView(discord.ui.View):
-    def __init__(self, guild_id: int, user_id: int, selected_key: str = CHARACTER_BASIC):
+    def __init__(self, guild_id: int, user_id: int, selected_key: str = CHARACTER_BASIC, fake_enabled: bool = True):
         super().__init__(timeout=900)
         self.guild_id = guild_id
         self.user_id = user_id
         self.selected_key = selected_key if character_unlocked(user_id, selected_key) else CHARACTER_BASIC
+        self.fake_enabled = fake_enabled
         options = [
             discord.SelectOption(
                 label=CHARACTERS[key]["name"],
@@ -5408,6 +5490,10 @@ class CharacterSelectView(discord.ui.View):
             options=options,
             min_values=1,
             max_values=1,
+        )
+        fake_toggle = discord.ui.Button(
+            label=f"페이크: {'ON' if self.fake_enabled else 'OFF'}",
+            style=discord.ButtonStyle.secondary,
         )
         start = discord.ui.Button(
             label="탐사 시작",
@@ -5424,12 +5510,20 @@ class CharacterSelectView(discord.ui.View):
             for option in select.options:
                 option.default = option.value == self.selected_key
             await interaction.response.edit_message(
-                embed=character_select_embed(self.user_id, self.selected_key),
+                embed=character_select_embed(self.user_id, self.selected_key, self.fake_enabled),
+                view=self,
+            )
+
+        async def fake_callback(interaction: discord.Interaction):
+            self.fake_enabled = not self.fake_enabled
+            fake_toggle.label = f"페이크: {'ON' if self.fake_enabled else 'OFF'}"
+            await interaction.response.edit_message(
+                embed=character_select_embed(self.user_id, self.selected_key, self.fake_enabled),
                 view=self,
             )
 
         async def start_callback(interaction: discord.Interaction):
-            await start_full_run(interaction, self.selected_key)
+            await start_full_run(interaction, self.selected_key, self.fake_enabled)
 
         async def close_callback(interaction: discord.Interaction):
             await interaction.response.defer()
@@ -5440,9 +5534,11 @@ class CharacterSelectView(discord.ui.View):
             self.stop()
 
         select.callback = select_callback
+        fake_toggle.callback = fake_callback
         start.callback = start_callback
         close.callback = close_callback
         self.add_item(select)
+        self.add_item(fake_toggle)
         self.add_item(start)
         self.add_item(close)
 
@@ -5548,7 +5644,7 @@ async def perform_reincarnation(interaction: discord.Interaction, session: GameS
     character_key = run_meta["character_key"]
     session.ended = True
     persist_session(session)
-    reset_player_for_full_run(p, character_key, carried=carried)
+    reset_player_for_full_run(p, character_key, carried=carried, fake_enabled=run_meta["fake_enabled"])
     discover_tool(p.user_id, carried.display_name())
     new_session = generate_floor(session.guild_id, session.user_id, today_key(), 1)
     sessions[(session.guild_id, session.user_id)] = new_session
@@ -5643,6 +5739,9 @@ class ReincarnationView(OwnerView):
 
 
 def collection_embed(guild_id: int, user_id: int, category: str = "overview") -> discord.Embed:
+    if category in ("characters", "endings") and not full_version_allowed(user_id):
+        title = "도감 · 캐릭터" if category == "characters" else "도감 · 엔딩"
+        return discord.Embed(title=title, description="데모 버전에서는 확인할 수 없습니다.")
     p = db.get_player(guild_id, user_id)
     discover_equipped_tools(p)
     meta = db.get_user_meta(user_id)
@@ -5686,18 +5785,17 @@ def collection_embed(guild_id: int, user_id: int, category: str = "overview") ->
         ending15 = "✅" if meta["ending15_count"] > 0 else "🔒"
         true_mark = "✅" if meta["true_ending_count"] > 0 else "🔒"
         embed.description = (
-            f"{ending15} **15층 엔딩** · {small_number(meta['ending15_count'])}회\n"
-            f"{true_mark} **진엔딩** · {small_number(meta['true_ending_count'])}회"
+            f"{ending15} **15층 엔딩** · {meta['ending15_count']}회\n"
+            f"{true_mark} **진엔딩** · {meta['true_ending_count']}회"
         )
-        embed.set_footer(text="엔딩 스토리와 세부 항목은 추후 추가될 예정이다.")
         return embed
     embed = discord.Embed(title="도감")
     embed.description = (
         f"🧑 캐릭터 · {len(unlocked)}/{len(CHARACTER_ORDER)}\n"
         f"👾 몬스터 · {len(seen_monsters.intersection(monsters))}/{len(monsters)}\n"
         f"🧰 도구 · {len(seen_tools.intersection(tools))}/{len(tools)}\n"
-        f"📖 15층 엔딩 · {small_number(meta['ending15_count'])}회\n"
-        f"📕 진엔딩 · {small_number(meta['true_ending_count'])}회"
+        f"📖 15층 엔딩 · {meta['ending15_count']}회\n"
+        f"📕 진엔딩 · {meta['true_ending_count']}회"
     )
     return embed
 
@@ -5779,16 +5877,12 @@ def daily_profile(day_key: str):
 
 def daily_rule_description(rule: str) -> str:
     return {
-        "🏺 항아리 증가": "항아리 방이 평소보다 많이 나타난다.",
-        "🪙 코인 부족": "코인 방이 사라지고 전투 보상이 줄어든다.",
-        "💣 화약 부족": "폭탄 드롭이 줄고 비밀 상점의 폭탄 재고가 적다.",
-        "💰 비밀 상점": "비밀방은 반드시 비밀 상점으로 생성된다.",
-        "👾 강한 개체": "모든 적의 HP가 증가한다.",
-        "🚪 열린 비밀방": "비밀방이 처음부터 열려 있다.",
+        "맵 크기 2배": "모든 층의 맵이 평소보다 2배 커진다.",
+        "목숨 1개": "목숨이 1개뿐이다. 죽으면 오늘의 도전이 끝난다.",
     }.get(rule, "특별한 규칙이 적용된다.")
 
 
-def make_daily_player(guild_id: int, user_id: int, character_key: str, day_key: str) -> PlayerState:
+def make_daily_player(guild_id: int, user_id: int, character_key: str, day_key: str, rule: str) -> PlayerState:
     max_hp = 10 if character_key == CHARACTER_GLASS else 20
     return PlayerState(
         guild_id=guild_id,
@@ -5806,49 +5900,9 @@ def make_daily_player(guild_id: int, user_id: int, character_key: str, day_key: 
         floor_number=1,
         highest_floor=1,
         checkpoint_floor=0,
-        lives_used=0,
+        lives_used=2 if rule == "목숨 1개" else 0,
         tutorial_completed=True,
     )
-
-
-def apply_daily_rule(session: GameSession):
-    rule = session.daily_rule
-    rooms = [room for pos, room in session.rooms.items() if pos not in ((0, 0), session.boss_pos, session.secret_pos)]
-    if rule == "🏺 항아리 증가":
-        candidates = [room for room in rooms if room.kind in ("normal", "coin", "empty")]
-        for room in candidates[:2]:
-            room.kind = "pot"
-            room.enemy = None
-            room.cleared = False
-    elif rule == "🪙 코인 부족":
-        for room in rooms:
-            if room.kind == "coin":
-                room.kind = "empty"
-    elif rule == "💣 화약 부족":
-        secret = session.rooms[session.secret_pos]
-        if secret.kind == "shop":
-            secret.bomb_stock = min(secret.bomb_stock, 1)
-    elif rule == "💰 비밀 상점":
-        secret = session.rooms[session.secret_pos]
-        secret.kind = "shop"
-        kinds = list(normal_gear_kinds(session.floor_number))
-        if session_character_key(session) == CHARACTER_CHAOS:
-            kinds = [kind for kind in kinds if kind != "weapon"]
-        picks = random.sample(kinds, min(2, len(kinds)))
-        while kinds and len(picks) < 2:
-            picks.append(random.choice(kinds))
-        secret.shop_stock = [generate_gear(kind, floor_number=session.floor_number) for kind in picks]
-        secret.bomb_stock = random.randint(1, 3)
-        secret.slot_uses = 0
-        secret.slot_broken = False
-    elif rule == "👾 강한 개체":
-        for room in session.rooms.values():
-            if room.enemy is not None:
-                bonus = max(1, math.ceil(room.enemy.max_hp * 0.25))
-                room.enemy.max_hp += bonus
-                room.enemy.hp += bonus
-    elif rule == "🚪 열린 비밀방":
-        session.secret_revealed = True
 
 
 def generate_daily_floor(guild_id: int, user_id: int, day_key: str, floor_number: int, player: PlayerState) -> GameSession:
@@ -5862,20 +5916,18 @@ def generate_daily_floor(guild_id: int, user_id: int, day_key: str, floor_number
             day_key,
             floor_number,
             character_key=profile["character_key"],
+            room_count=16 if profile["rule"] == "맵 크기 2배" else 8,
         )
         session.mode = "daily"
         session.character_key_override = profile["character_key"]
         session.daily_rule = profile["rule"]
         session.temp_player = player
-        apply_daily_rule(session)
         return session
     finally:
         random.setstate(rng_state)
 
 
 def daily_coin_gain(session: GameSession, amount: int) -> int:
-    if session.is_daily and session.daily_rule == "🪙 코인 부족":
-        return max(1, math.floor(amount * 0.70))
     return amount
 
 
@@ -6074,7 +6126,7 @@ async def start_or_continue_daily(interaction: discord.Interaction, day_key: str
         session = load_persisted_daily_session(guild_id, user_id, day_key)
     if session is None:
         profile = daily_profile(day_key)
-        player = make_daily_player(guild_id, user_id, profile["character_key"], day_key)
+        player = make_daily_player(guild_id, user_id, profile["character_key"], day_key, profile["rule"])
         session = generate_daily_floor(guild_id, user_id, day_key, 1, player)
         db.record_daily_progress(
             guild_id,
@@ -6456,12 +6508,10 @@ async def game(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="도감", description="풀 버전 도감을 확인합니다.")
+@bot.tree.command(name="도감", description="도감을 확인합니다.")
 async def collection_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
-        return
-    if not await require_full_version(interaction):
         return
     await interaction.response.send_message(
         embed=collection_embed(interaction.guild_id, interaction.user.id),
