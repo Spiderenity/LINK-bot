@@ -563,6 +563,10 @@ class GameSession:
     def is_daily(self) -> bool:
         return self.mode == "daily"
 
+    @property
+    def is_endless(self) -> bool:
+        return self.mode == "endless"
+
     def room(self) -> Room:
         return self.rooms[self.current]
 
@@ -682,6 +686,30 @@ class Database:
                     day_key TEXT NOT NULL,
                     floor_number INTEGER NOT NULL,
                     state_json TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS endless_runs (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    floor_number INTEGER NOT NULL,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS endless_records (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    best_floor INTEGER NOT NULL DEFAULT 1,
+                    best_coins INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (guild_id, user_id)
                 )
                 """
@@ -901,7 +929,7 @@ class Database:
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id, user_id) DO UPDATE SET
                     day_key=excluded.day_key,
-                    floor_number=MAX(daily_records.floor_number, excluded.floor_number),
+                    floor_number=excluded.floor_number,
                     state_json=excluded.state_json
                 """,
                 (guild_id, user_id, day_key, floor_number, state_json),
@@ -960,6 +988,80 @@ class Database:
                 (guild_id, user_id),
             )
             con.commit()
+
+    def save_endless_run(self, guild_id: int, user_id: int, floor_number: int, state_json: str):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO endless_runs (guild_id, user_id, floor_number, state_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    floor_number=excluded.floor_number,
+                    state_json=excluded.state_json,
+                    updated_at=excluded.updated_at
+                """,
+                (guild_id, user_id, max(1, floor_number), state_json, datetime.now(KST).isoformat(timespec="seconds")),
+            )
+            con.commit()
+
+    def load_endless_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT floor_number, state_json
+                FROM endless_runs
+                WHERE guild_id=? AND user_id=?
+                """,
+                (guild_id, user_id),
+            ).fetchone()
+
+    def delete_endless_run(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM endless_runs WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
+            )
+            con.commit()
+
+    def record_endless_progress(self, guild_id: int, user_id: int, floor_number: int, coins: int):
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO endless_records (guild_id, user_id, best_floor, best_coins, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    best_floor=MAX(endless_records.best_floor, excluded.best_floor),
+                    best_coins=CASE
+                        WHEN excluded.best_floor > endless_records.best_floor THEN excluded.best_coins
+                        WHEN excluded.best_floor = endless_records.best_floor THEN MAX(endless_records.best_coins, excluded.best_coins)
+                        ELSE endless_records.best_coins
+                    END,
+                    updated_at=excluded.updated_at
+                """,
+                (guild_id, user_id, max(1, floor_number), max(0, coins), datetime.now(KST).isoformat(timespec="seconds")),
+            )
+            con.commit()
+
+    def endless_ranking(self, guild_id: int, limit: int = 25):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT user_id, best_floor, best_coins
+                FROM endless_records
+                WHERE guild_id=?
+                ORDER BY best_floor DESC, best_coins DESC, user_id ASC
+                LIMIT ?
+                """,
+                (guild_id, limit),
+            ).fetchall()
+
+    def player_guild_ids(self, user_id: int):
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT guild_id FROM players WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
+        return [int(row[0]) for row in rows]
 
     def record_daily_progress(self, guild_id: int, day_key: str, user_id: int, floor_number: int, coins: int, character_key: str, rule: str, completed: bool = False, finished: bool = False):
         with self.connect() as con:
@@ -1182,7 +1284,7 @@ class Database:
             con.commit()
 
     def mark_expedition_activity(self, guild_id: int, user_id: int, mode: str):
-        if mode not in ("main", "daily"):
+        if mode not in ("main", "daily", "endless"):
             return
         with self.connect() as con:
             con.execute(
@@ -1203,7 +1305,7 @@ class Database:
                 "SELECT last_mode FROM expedition_activity WHERE guild_id=? AND user_id=?",
                 (guild_id, user_id),
             ).fetchone()
-        if row is None or row[0] not in ("main", "daily"):
+        if row is None or row[0] not in ("main", "daily", "endless"):
             return None
         return str(row[0])
 
@@ -1290,6 +1392,7 @@ db = Database(DB_PATH)
 sessions: Dict[Tuple[int, int], GameSession] = {}
 tutorial_sessions: Dict[Tuple[int, int], GameSession] = {}
 daily_sessions: Dict[Tuple[int, int], GameSession] = {}
+endless_sessions: Dict[Tuple[int, int], GameSession] = {}
 debug_messages = {}
 
 
@@ -1700,6 +1803,7 @@ def session_from_state(guild_id: int, user_id: int, raw: str):
         fake_enabled=bool(data.get("fake_enabled", False)),
         temp_player=player_from_state_data(data.get("temp_player")),
     )
+    scale_saved_session_enemies(session)
     room = session.room()
     if room.kind in ("normal", "boss") and not room.cleared and room.enemy is not None:
         session.phase = "battle_ready"
@@ -1724,6 +1828,15 @@ def persist_session(session: GameSession):
             )
             raw = json.dumps(session_state(session), ensure_ascii=False, separators=(",", ":"))
             db.save_daily_run(session.guild_id, session.user_id, session.day_key, session.floor_number, raw)
+            return
+        if session.is_endless:
+            if session.ended:
+                return
+            p = session_player(session)
+            db.record_endless_progress(session.guild_id, session.user_id, max(session.floor_number, p.highest_floor), p.coins)
+            db.mark_expedition_activity(session.guild_id, session.user_id, "endless")
+            raw = json.dumps(session_state(session), ensure_ascii=False, separators=(",", ":"))
+            db.save_endless_run(session.guild_id, session.user_id, session.floor_number, raw)
             return
         if session.ended:
             db.delete_run(session.guild_id, session.user_id)
@@ -1754,6 +1867,22 @@ def load_persisted_daily_session(guild_id: int, user_id: int, day_key: str):
         return None
 
 
+def load_persisted_endless_session(guild_id: int, user_id: int):
+    row = db.load_endless_run(guild_id, user_id)
+    if row is None:
+        return None
+    saved_floor, raw = row
+    try:
+        session = session_from_state(guild_id, user_id, raw)
+        if not session.is_endless or int(saved_floor) != int(session.floor_number) or session.temp_player is None:
+            raise ValueError("저장된 엔드리스 상태가 올바르지 않다.")
+        return session
+    except Exception as exc:
+        print(f"저장된 엔드리스를 불러오지 못했다: {type(exc).__name__}: {exc}")
+        db.delete_endless_run(guild_id, user_id)
+        return None
+
+
 def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_number: int):
     row = db.load_run(guild_id, user_id)
     if row is None:
@@ -1771,17 +1900,134 @@ def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_numb
 
 
 def session_player(session: GameSession) -> PlayerState:
-    if session.is_tutorial or session.is_daily:
+    if session.is_tutorial or session.is_daily or session.is_endless:
         assert session.temp_player is not None
         return session.temp_player
     return db.get_player(session.guild_id, session.user_id)
 
 
 def save_session_player(session: GameSession, player: PlayerState):
-    if session.is_tutorial or session.is_daily:
+    if session.is_tutorial or session.is_daily or session.is_endless:
         session.temp_player = player
         return
     db.save_player(player)
+
+
+def clone_player_state(player: PlayerState) -> PlayerState:
+    cloned = player_from_state_data(player_state_data(player))
+    if cloned is None:
+        raise ValueError("플레이어 상태를 복제할 수 없다.")
+    return cloned
+
+
+def get_endless_session(guild_id: int, user_id: int):
+    key = (guild_id, user_id)
+    session = endless_sessions.get(key)
+    if session is not None and not session.ended and session.is_endless:
+        return session
+    if session is not None:
+        cancel_cue(session)
+        cancel_bleed(session, clear=True)
+        endless_sessions.pop(key, None)
+    session = load_persisted_endless_session(guild_id, user_id)
+    if session is not None:
+        endless_sessions[key] = session
+    return session
+
+
+def endless_save_exists(guild_id: int, user_id: int) -> bool:
+    session = endless_sessions.get((guild_id, user_id))
+    if session is not None and not session.ended and session.is_endless:
+        return True
+    return db.load_endless_run(guild_id, user_id) is not None
+
+
+def remove_endless_save(guild_id: int, user_id: int):
+    key = (guild_id, user_id)
+    old = endless_sessions.pop(key, None)
+    if old is not None:
+        cancel_cue(old)
+        cancel_bleed(old, clear=True)
+        old.ended = True
+    db.delete_endless_run(guild_id, user_id)
+
+
+def convert_session_to_endless(session: GameSession, player: PlayerState, character_key: str, fake_enabled: bool):
+    cancel_cue(session)
+    cancel_bleed(session, clear=True)
+    session.mode = "endless"
+    session.temp_player = clone_player_state(player)
+    session.character_key_override = character_key if character_key in CHARACTERS else CHARACTER_BASIC
+    session.fake_enabled = bool(fake_enabled)
+    session.ended = False
+    room = session.room()
+    if room.kind in ("normal", "boss") and not room.cleared and room.enemy is not None:
+        session.phase = "battle_ready"
+    else:
+        session.phase = "explore"
+    scale_saved_session_enemies(session)
+    return session
+
+
+def migrate_demo_progress_to_endless(guild_id: int, user_id: int) -> bool:
+    if endless_save_exists(guild_id, user_id):
+        return False
+    p = db.get_player(guild_id, user_id)
+    if p.floor_number <= 30 or p.status not in ("playing", "dead"):
+        return False
+    if p.status == "dead" and remaining_lives(p) <= 0:
+        return False
+    key = (guild_id, user_id)
+    source = sessions.pop(key, None)
+    if source is None:
+        row = db.load_run(guild_id, user_id)
+        if row is not None:
+            try:
+                source = session_from_state(guild_id, user_id, row[2])
+            except Exception:
+                source = None
+    endless_player = clone_player_state(p)
+    if p.status == "dead":
+        endless_player.hp = player_max_hp(endless_player)
+        endless_player.status = "playing"
+        endless_player.floor_number = checkpoint_start_floor(endless_player)
+        source = None
+    if source is None or source.floor_number != endless_player.floor_number:
+        source = generate_floor(
+            guild_id,
+            user_id,
+            today_key(),
+            endless_player.floor_number,
+            character_key=CHARACTER_BASIC,
+            fake_enabled=False,
+        )
+    source = convert_session_to_endless(source, endless_player, CHARACTER_BASIC, False)
+    endless_sessions[key] = source
+    persist_session(source)
+    p.highest_floor = min(p.highest_floor, 30)
+    mark_full_run_ready(p)
+    return True
+
+
+def convert_main_progress_to_endless(session: GameSession):
+    guild_id = session.guild_id
+    user_id = session.user_id
+    key = (guild_id, user_id)
+    p = db.get_player(guild_id, user_id)
+    run_meta = db.get_run_meta(guild_id, user_id)
+    remove_endless_save(guild_id, user_id)
+    converted = convert_session_to_endless(
+        session,
+        p,
+        run_meta["character_key"],
+        run_meta["fake_enabled"],
+    )
+    sessions.pop(key, None)
+    endless_sessions[key] = converted
+    p.highest_floor = min(p.highest_floor, 30)
+    mark_full_run_ready(p)
+    persist_session(converted)
+    return converted
 
 
 def remaining_lives(player: PlayerState) -> int:
@@ -1919,6 +2165,8 @@ def gear_change_summary(player: PlayerState, gear: Gear) -> str:
 def room_title(session: GameSession, label: str) -> str:
     if session.is_tutorial:
         return f"0층 · 튜토리얼 · {label}"
+    if session.is_endless:
+        return f"엔드리스 · {session.floor_number}층 · {label}"
     return f"{session.floor_number}층 · {label}"
 
 
@@ -2068,13 +2316,40 @@ def magic_shop_available(session: GameSession) -> bool:
     )
 
 
+def enemy_hp_growth(floor_number: int, boss: bool) -> int:
+    floor_bonus = max(0, floor_number - 1)
+    if boss:
+        return floor_bonus * 4 + (floor_bonus * floor_bonus) // 10
+    return floor_bonus * 2 + (floor_bonus * floor_bonus) // 14
+
+
+def scale_saved_enemy_hp(enemy: Enemy, floor_number: int):
+    spec = SHAPES.get(enemy.shape)
+    if spec is None:
+        return
+    minimum_max = int(spec["hp"][0]) + enemy_hp_growth(floor_number, enemy.boss)
+    if enemy.max_hp >= minimum_max:
+        return
+    old_max = max(1, enemy.max_hp)
+    old_hp = max(0, enemy.hp)
+    ratio = min(1.0, old_hp / old_max)
+    enemy.max_hp = minimum_max
+    enemy.hp = 0 if old_hp <= 0 else max(1, round(minimum_max * ratio))
+
+
+def scale_saved_session_enemies(session: GameSession):
+    for room in session.rooms.values():
+        if room.enemy is not None:
+            scale_saved_enemy_hp(room.enemy, session.floor_number)
+
+
 def make_enemy(boss=False, floor_number: int = 1) -> Enemy:
     shape = "보스" if boss else random.choice(NORMAL_ENEMIES)
     color = random.choice(COLORS)
     spec = SHAPES[shape]
     floor_bonus = max(0, floor_number - 1)
 
-    hp = random.randint(*spec["hp"]) + floor_bonus * (4 if boss else 2)
+    hp = random.randint(*spec["hp"]) + enemy_hp_growth(floor_number, boss)
     damage = random.randint(*spec["damage"]) + floor_bonus // 2
     modifier = None
     if not boss and random.random() < ENEMY_MODIFIER_CHANCE:
@@ -2438,6 +2713,8 @@ def enemy_should_flee(player: PlayerState, enemy: Enemy) -> bool:
 def flee_overpowered_enemy(session: GameSession, player: PlayerState) -> str:
     room = session.room()
     enemy = room.enemy
+    if enemy is not None:
+        scale_saved_enemy_hp(enemy, session.floor_number)
     if (
         session.is_tutorial
         or room.kind != "normal"
@@ -2676,6 +2953,8 @@ def combat_stat_lines(player: PlayerState) -> str:
 def player_embed(player: PlayerState, session: GameSession, title: str, colour=None, show_resources=True):
     if session.is_tutorial and not title.startswith("0층"):
         title = f"0층 · 튜토리얼 · {title}"
+    elif session.is_endless and not title.startswith("엔드리스"):
+        title = f"엔드리스 · {title}"
 
     resource_line = (
         f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
@@ -2709,7 +2988,11 @@ def exploration_embed(player, session, note="", footer_status=""):
     title = (
         f"0층 · 튜토리얼 · {room_name(room)}"
         if session.is_tutorial
-        else f"{session.floor_number}층 · {room_name(room)}"
+        else (
+            f"엔드리스 · {session.floor_number}층 · {room_name(room)}"
+            if session.is_endless
+            else f"{session.floor_number}층 · {room_name(room)}"
+        )
     )
 
     around = []
@@ -2730,11 +3013,12 @@ def exploration_embed(player, session, note="", footer_status=""):
         and session.current == session.boss_pos
         and not session.is_tutorial
     ):
-        if full_version_allowed(session.user_id) and session.floor_number == 30:
+        if full_version_allowed(session.user_id) and session.floor_number == 30 and not session.is_endless:
             around.append("📖 **진엔딩**")
+            around.append("🪜 **31층 · 엔드리스 진입**")
         else:
             around.append(f"🪜 **{session.floor_number + 1}층**")
-        if full_version_allowed(session.user_id) and session.floor_number == 15:
+        if full_version_allowed(session.user_id) and session.floor_number == 15 and not session.is_endless:
             around.append("📖 **엔딩** · ⛲ **환생**")
 
     resources = (
@@ -2778,21 +3062,25 @@ def exploration_embed(player, session, note="", footer_status=""):
                 footer_lines.append("⚠️ 튜토리얼의 아이템은 사라진다!")
         elif session.current == session.boss_pos:
             footer_lines.append("보스를 처치했다!")
-            if full_version_allowed(session.user_id) and session.floor_number == 15:
+            if full_version_allowed(session.user_id) and session.floor_number == 15 and not session.is_endless:
                 run_meta = db.get_run_meta(session.guild_id, session.user_id)
                 options = "엔딩을 보거나, 16층으로 가거나 더 둘러볼 수 있다."
                 if not run_meta["reincarnated"]:
                     options = "엔딩을 보거나, 환생하거나, 16층으로 갈 수 있다."
                 footer_lines.append(options)
-            elif full_version_allowed(session.user_id) and session.floor_number == 30:
-                footer_lines.append("진엔딩을 볼 수 있다.")
+            elif full_version_allowed(session.user_id) and session.floor_number == 30 and not session.is_endless:
+                footer_lines.append("진엔딩을 보거나 31층으로 진행해 엔드리스에 진입할 수 있다.")
+            elif session.is_endless:
+                footer_lines.append(f"엔드리스 · {session.floor_number + 1}층으로 진행할 수 있다. 엔딩은 발생하지 않는다.")
             else:
                 footer_lines.append(
                     f"{session.floor_number + 1}층으로 가거나 더 둘러볼 수 있다."
                 )
         else:
-            if full_version_allowed(session.user_id) and session.floor_number == 30:
-                footer_lines.append("보스 방에서 진엔딩을 볼 수 있다.")
+            if full_version_allowed(session.user_id) and session.floor_number == 30 and not session.is_endless:
+                footer_lines.append("보스 방에서 진엔딩 또는 엔드리스 진입을 선택할 수 있다.")
+            elif session.is_endless:
+                footer_lines.append(f"보스 방에서 엔드리스 {session.floor_number + 1}층으로 갈 수 있다.")
             else:
                 footer_lines.append(
                     f"보스 방에서 {session.floor_number + 1}층으로 갈 수 있다."
@@ -3148,7 +3436,7 @@ class ExploreView(OwnerView):
 
                 btn.callback = leave_tutorial_callback
                 self.add_item(btn)
-            elif full_version_allowed(session.user_id) and session.floor_number == 30:
+            elif full_version_allowed(session.user_id) and session.floor_number == 30 and not session.is_endless:
                 ending = discord.ui.Button(
                     label="진엔딩",
                     emoji="📖",
@@ -3160,8 +3448,20 @@ class ExploreView(OwnerView):
 
                 ending.callback = true_ending_callback
                 self.add_item(ending)
+
+                btn = discord.ui.Button(
+                    label="31층 · 엔드리스",
+                    emoji="🪜",
+                    style=discord.ButtonStyle.danger,
+                )
+
+                async def endless_callback(interaction):
+                    await climb_next_floor(interaction, self.session)
+
+                btn.callback = endless_callback
+                self.add_item(btn)
             else:
-                if full_version_allowed(session.user_id) and session.floor_number == 15:
+                if full_version_allowed(session.user_id) and session.floor_number == 15 and not session.is_endless:
                     ending = discord.ui.Button(
                         label="엔딩",
                         emoji="📖",
@@ -4439,6 +4739,78 @@ def reset_player_after_game_over(player: PlayerState, full_access: bool):
     db.delete_run(player.guild_id, player.user_id)
 
 
+async def handle_endless_death(interaction, session: GameSession, note: str, footer_status: str = "", background: bool = False):
+    cancel_cue(session)
+    cancel_bleed(session, clear=True)
+    p = session_player(session)
+    p.hp = 0
+    p.last_day = today_key()
+    p.status = "dead"
+    p.floor_number = session.floor_number
+    p.highest_floor = max(p.highest_floor, session.floor_number)
+    p.lives_used += 1
+    db.record_endless_progress(session.guild_id, session.user_id, p.highest_floor, p.coins)
+    key = (session.guild_id, session.user_id)
+    session.ended = True
+
+    if remaining_lives(p) <= 0:
+        endless_sessions.pop(key, None)
+        db.delete_endless_run(session.guild_id, session.user_id)
+        embed = discord.Embed(
+            title="엔드리스 종료",
+            description=(
+                note
+                + "\n\n**눈앞이 캄캄해졌다!**"
+                + f"\n최고 도달 층 **{p.highest_floor}층**"
+                + "\n엔드리스 세이브가 종료되었다. 최고 기록은 `/랭킹`에 남는다."
+            ),
+        )
+        if footer_status:
+            embed.set_footer(text=footer_status)
+        if background:
+            await interaction.edit_original_response(embed=embed, view=None)
+        else:
+            await interaction.response.edit_message(embed=embed, view=None)
+        return
+
+    p.hp = player_max_hp(p)
+    p.status = "playing"
+    p.floor_number = checkpoint_start_floor(p)
+    character_key = session_character_key(session)
+    new_session = generate_floor(
+        session.guild_id,
+        session.user_id,
+        today_key(),
+        p.floor_number,
+        character_key=character_key,
+        fake_enabled=session.fake_enabled,
+    )
+    new_session.mode = "endless"
+    new_session.temp_player = p
+    new_session.character_key_override = character_key
+    endless_sessions[key] = new_session
+    persist_session(new_session)
+    restart_line = (
+        "**체크포인트로 돌아갈 준비가 되었다.**"
+        if p.checkpoint_floor > 0
+        else "**1층부터 다시 시작할 준비가 되었다.**"
+    )
+    embed = player_embed(p, new_session, "게임 오버")
+    embed.description = (
+        note
+        + "\n\n**눈앞이 캄캄해졌다!**"
+        + f"\n{restart_line}"
+        + f"\n남은 목숨 **{remaining_lives(p)}/{MAX_DAILY_LIVES}**"
+        + "\n`/게임`에서 엔드리스 세이브를 선택해 계속할 수 있다."
+    )
+    if footer_status:
+        embed.set_footer(text=footer_status)
+    if background:
+        await interaction.edit_original_response(embed=embed, view=None)
+    else:
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
 async def player_died(interaction, session, note, footer_status=""):
     cancel_cue(session)
     cancel_bleed(session, clear=True)
@@ -4484,6 +4856,9 @@ async def player_died(interaction, session, note, footer_status=""):
             embed=exploration_embed(p, new_session, restart_note, footer_status=footer_status),
             view=ExploreView(new_session),
         )
+        return
+    if session.is_endless:
+        await handle_endless_death(interaction, session, note, footer_status=footer_status, background=False)
         return
     session.ended = True
     persist_session(session)
@@ -4571,6 +4946,9 @@ async def player_died_background(interaction, session, note):
             view=ExploreView(new_session),
         )
         return
+    if session.is_endless:
+        await handle_endless_death(interaction, session, note, background=True)
+        return
     session.ended = True
     persist_session(session)
 
@@ -4634,6 +5012,33 @@ async def leave_tutorial(interaction, session):
     await interaction.response.edit_message(embed=embed, view=None)
 
 
+class EndlessEntryConfirmView(OwnerView):
+    def __init__(self, session: GameSession, overwrite: bool):
+        super().__init__(session, timeout=300)
+        self.overwrite = overwrite
+        confirm = discord.ui.Button(label="엔드리스 진입", style=discord.ButtonStyle.danger)
+        cancel = discord.ui.Button(label="취소", style=discord.ButtonStyle.secondary)
+
+        async def confirm_callback(interaction: discord.Interaction):
+            if self.session.is_endless:
+                await climb_next_floor(interaction, self.session)
+                return
+            converted = convert_main_progress_to_endless(self.session)
+            await climb_next_floor(interaction, converted)
+
+        async def cancel_callback(interaction: discord.Interaction):
+            p = session_player(self.session)
+            await interaction.response.edit_message(
+                embed=exploration_embed(p, self.session, "엔드리스 진입을 취소했다."),
+                view=ExploreView(self.session),
+            )
+
+        confirm.callback = confirm_callback
+        cancel.callback = cancel_callback
+        self.add_item(confirm)
+        self.add_item(cancel)
+
+
 async def climb_next_floor(interaction, session):
     if not session.boss_defeated or session.current != session.boss_pos:
         p = session_player(session)
@@ -4643,11 +5048,17 @@ async def climb_next_floor(interaction, session):
         )
         return
 
-    if full_version_allowed(session.user_id) and not session.is_tutorial and session.floor_number >= 30:
-        p = session_player(session)
+    if full_version_allowed(session.user_id) and not session.is_tutorial and not session.is_endless and session.floor_number >= 30:
+        overwrite = endless_save_exists(session.guild_id, session.user_id)
+        description = (
+            "**30층에서 엔딩을 보지 않고 진행하면 현재 탐사가 엔드리스 모드로 전환됩니다.**\n"
+            "엔드리스에 진입한 뒤에는 이 저장에서 엔딩을 볼 수 없습니다."
+        )
+        if overwrite:
+            description += "\n\n⚠️ **기존 엔드리스 세이브가 있습니다. 계속하면 기존 엔드리스 세이브를 덮어씁니다.**"
         await interaction.response.edit_message(
-            embed=exploration_embed(p, session, "더 내려갈 길은 없다. 진엔딩을 볼 수 있다."),
-            view=ExploreView(session),
+            embed=discord.Embed(title="엔드리스 진입", description=description),
+            view=EndlessEntryConfirmView(session, overwrite),
         )
         return
 
@@ -4768,6 +5179,20 @@ async def climb_next_floor(interaction, session):
             p,
         )
         daily_sessions[(session.guild_id, session.user_id)] = new_session
+    elif session.is_endless:
+        character_key = session_character_key(session)
+        new_session = generate_floor(
+            session.guild_id,
+            session.user_id,
+            session.day_key,
+            p.floor_number,
+            character_key=character_key,
+            fake_enabled=session.fake_enabled,
+        )
+        new_session.mode = "endless"
+        new_session.temp_player = p
+        new_session.character_key_override = character_key
+        endless_sessions[(session.guild_id, session.user_id)] = new_session
     else:
         new_session = generate_floor(
             session.guild_id,
@@ -5245,6 +5670,11 @@ def debug_stop_sessions(guild_id: int, user_id: int):
         cancel_cue(old_tutorial)
         cancel_bleed(old_tutorial, clear=True)
         old_tutorial.ended = True
+    old_endless = endless_sessions.pop(key, None)
+    if old_endless:
+        cancel_cue(old_endless)
+        cancel_bleed(old_endless, clear=True)
+        old_endless.ended = True
     db.delete_run(guild_id, user_id)
 
 
@@ -5539,7 +5969,14 @@ class FullAccessModal(discord.ui.Modal, title="풀 버전 인증"):
             await interaction.response.send_message("비밀번호가 맞지 않다.", ephemeral=True)
             return
         db.grant_full_access(interaction.user.id)
-        await interaction.response.send_message("✅ 풀 버전이 해금되었다!", ephemeral=True)
+        migrated = []
+        for guild_id in db.player_guild_ids(interaction.user.id):
+            if migrate_demo_progress_to_endless(guild_id, interaction.user.id):
+                migrated.append(guild_id)
+        message = "✅ 풀 버전이 해금되었다!"
+        if migrated:
+            message += "\n30층을 초과한 데모 탐사 기록을 **엔드리스 세이브**로 자동 이전했다."
+        await interaction.response.send_message(message, ephemeral=True)
 
 
 def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC, fake_enabled: bool = False) -> discord.Embed:
@@ -5695,7 +6132,7 @@ async def finish_full_ending(interaction: discord.Interaction, session: GameSess
     if not await require_full_version(interaction):
         return
     target_floor = 30 if true_ending else 15
-    if session.is_tutorial or session.floor_number != target_floor or not session.boss_defeated or session.current != session.boss_pos:
+    if session.is_tutorial or session.is_endless or session.floor_number != target_floor or not session.boss_defeated or session.current != session.boss_pos:
         await interaction.response.defer()
         return
     before = {key for key in CHARACTER_ORDER if character_unlocked(session.user_id, key)}
@@ -6279,9 +6716,11 @@ async def start_or_continue_daily(interaction: discord.Interaction, day_key: str
 
 def forfeit_embed(player: PlayerState, character_key: str, mode: str) -> discord.Embed:
     is_daily = mode == "daily"
+    is_endless = mode == "endless"
+    mode_name = "데일리" if is_daily else ("엔드리스" if is_endless else "메인")
     embed = discord.Embed(
-        title="탐사 포기",
-        description="**데일리 탐사를 포기합니다.**" if is_daily else "**메인 탐사를 포기합니다.**",
+        title=f"탐사 포기 · {mode_name}",
+        description=f"**{mode_name} 탐사를 포기합니다.**",
     )
     if is_daily:
         embed.add_field(
@@ -6290,6 +6729,16 @@ def forfeit_embed(player: PlayerState, character_key: str, mode: str) -> discord
             inline=False,
         )
         embed.set_footer(text="포기하면 오늘은 다시 데일리에 도전할 수 없다.")
+    elif is_endless:
+        embed.add_field(
+            name="현재 탐사",
+            value=(
+                f"캐릭터 · `{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`\n"
+                f"{short_save_stats(player)}"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="엔드리스 세이브는 삭제되지만 최고 도달 기록은 랭킹에 남는다.")
     else:
         if full_version_allowed(player.user_id):
             embed.add_field(
@@ -6400,6 +6849,26 @@ async def perform_daily_forfeit(interaction: discord.Interaction, guild_id: int,
     )
 
 
+async def perform_endless_forfeit(interaction: discord.Interaction, guild_id: int, user_id: int):
+    session = get_endless_session(guild_id, user_id)
+    if session is None:
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="탐사 포기 · 엔드리스", description="진행 중인 엔드리스 탐사가 없다."),
+            view=StatusCloseView(user_id),
+        )
+        return
+    p = session_player(session)
+    db.record_endless_progress(guild_id, user_id, max(p.highest_floor, session.floor_number), p.coins)
+    remove_endless_save(guild_id, user_id)
+    await interaction.response.edit_message(
+        embed=discord.Embed(
+            title="탐사 포기 · 엔드리스",
+            description="엔드리스 탐사를 포기했다.\n세이브는 삭제되었지만 최고 기록은 `/랭킹`에 남는다.",
+        ),
+        view=StatusCloseView(user_id),
+    )
+
+
 class ForfeitConfirmView(discord.ui.View):
     def __init__(self, guild_id: int, user_id: int, mode: str):
         super().__init__(timeout=300)
@@ -6412,6 +6881,8 @@ class ForfeitConfirmView(discord.ui.View):
         async def confirm_callback(interaction: discord.Interaction):
             if self.mode == "daily":
                 await perform_daily_forfeit(interaction, self.guild_id, self.user_id)
+            elif self.mode == "endless":
+                await perform_endless_forfeit(interaction, self.guild_id, self.user_id)
             else:
                 await perform_main_forfeit(interaction, self.guild_id, self.user_id)
 
@@ -6615,8 +7086,7 @@ async def debug_command(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="게임", description="탐사를 시작하거나 이어서 진행한다.")
-async def game(interaction: discord.Interaction):
+async def open_main_game(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
             "서버 안에서만 사용할 수 있다.",
@@ -6864,6 +7334,151 @@ async def game(interaction: discord.Interaction):
     )
 
 
+def short_save_stats(player: PlayerState) -> str:
+    return (
+        f"🪜 **{player.floor_number}층** · ❤️ `{player.hp}/{player_max_hp(player)}`\n"
+        f"⚔️ {small_number(attack_power(player))} · 🛡️ {small_number(defense_power(player))} · "
+        f"🪙 {small_number(player.coins)} · 💣 {small_number(player.bombs)}"
+    )
+
+
+def game_save_select_embed(guild_id: int, user_id: int) -> discord.Embed:
+    main_player = db.get_player(guild_id, user_id)
+    endless = get_endless_session(guild_id, user_id)
+    embed = discord.Embed(
+        title="탐사 선택",
+        description="**어떤 세이브로 탐사하시겠습니까?**",
+    )
+    if main_player.status == "ready":
+        main_value = "새 일반 탐사를 시작할 수 있다."
+        main_name = "새 탐사"
+    else:
+        main_value = short_save_stats(main_player)
+        main_name = "일반"
+    embed.add_field(name=main_name, value=main_value, inline=False)
+    if endless is not None:
+        endless_player = session_player(endless)
+        embed.add_field(
+            name="엔드리스",
+            value=short_save_stats(endless_player) + "\n엔딩 없음 · 최고 기록은 엔드리스 랭킹에 기록",
+            inline=False,
+        )
+    return embed
+
+
+async def open_endless_game(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
+        return
+    guild_id = interaction.guild_id
+    user_id = interaction.user.id
+    session = get_endless_session(guild_id, user_id)
+    if session is None:
+        await interaction.response.send_message("엔드리스 세이브가 없다.", ephemeral=True)
+        return
+    p = session_player(session)
+    p.status = "playing"
+    save_session_player(session, p)
+    db.mark_expedition_activity(guild_id, user_id, "endless")
+    room = session.room()
+    if session.pending_loot is not None:
+        await interaction.response.send_message(
+            embed=loot_embed(p, session, session.pending_loot),
+            view=LootView(session, session.pending_loot),
+            ephemeral=True,
+        )
+    elif room.kind in ("normal", "boss") and not room.cleared:
+        flee_note = flee_overpowered_enemy(session, p)
+        if flee_note:
+            await interaction.response.send_message(
+                embed=exploration_embed(p, session, flee_note),
+                view=ExploreView(session),
+                ephemeral=True,
+            )
+            return
+        cancel_cue(session)
+        session.phase = "battle_ready"
+        await interaction.response.send_message(
+            embed=combat_embed(p, session, "엔드리스 탐사로 돌아왔다."),
+            view=BattleStartView(session),
+            ephemeral=True,
+        )
+    elif room.kind == "shop":
+        await interaction.response.send_message(embed=shop_embed(p, session), view=ShopView(session), ephemeral=True)
+    elif room.kind == "slot":
+        await interaction.response.send_message(embed=slot_embed(p, session), view=SlotView(session), ephemeral=True)
+    else:
+        await interaction.response.send_message(
+            embed=exploration_embed(p, session, "엔드리스 탐사를 이어간다."),
+            view=ExploreView(session),
+            ephemeral=True,
+        )
+
+
+class GameSaveSelectView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        p = db.get_player(guild_id, user_id)
+        normal = discord.ui.Button(
+            label="새 탐사" if p.status == "ready" else "일반",
+            style=discord.ButtonStyle.primary,
+        )
+        endless = discord.ui.Button(label="엔드리스", style=discord.ButtonStyle.secondary)
+
+        async def normal_callback(interaction: discord.Interaction):
+            await open_main_game(interaction)
+            self.stop()
+            try:
+                await interaction.message.edit(view=None)
+            except discord.HTTPException:
+                pass
+
+        async def endless_callback(interaction: discord.Interaction):
+            await open_endless_game(interaction)
+            self.stop()
+            try:
+                await interaction.message.edit(view=None)
+            except discord.HTTPException:
+                pass
+
+        normal.callback = normal_callback
+        endless.callback = endless_callback
+        self.add_item(normal)
+        self.add_item(endless)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+@bot.tree.command(name="게임", description="탐사를 시작하거나 이어서 진행한다.")
+async def game(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
+        return
+    guild_id = interaction.guild_id
+    user_id = interaction.user.id
+    p = db.get_player(guild_id, user_id)
+    if not p.tutorial_completed:
+        await open_main_game(interaction)
+        return
+    if full_version_allowed(user_id):
+        if p.floor_number > 30 and p.status in ("playing", "dead") and not endless_save_exists(guild_id, user_id):
+            migrate_demo_progress_to_endless(guild_id, user_id)
+        if endless_save_exists(guild_id, user_id):
+            await interaction.response.send_message(
+                embed=game_save_select_embed(guild_id, user_id),
+                view=GameSaveSelectView(guild_id, user_id),
+                ephemeral=True,
+            )
+            return
+    await open_main_game(interaction)
+
+
 @bot.tree.command(name="도감", description="도감을 확인한다.")
 async def collection_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
@@ -6899,28 +7514,29 @@ async def forfeit_command(interaction: discord.Interaction):
         return
     guild_id = interaction.guild_id
     user_id = interaction.user.id
-    p = db.get_player(guild_id, user_id)
-    main_active = p.status in ("playing", "dead") and not (p.status == "dead" and p.lives_used >= MAX_DAILY_LIVES)
-    daily_record, daily_session = daily_forfeit_state(guild_id, user_id)
-    daily_active = daily_record is not None
-    if not main_active and not daily_active:
+    modes, p, daily_record, daily_session, endless_session = active_expedition_modes(guild_id, user_id)
+    if not modes:
         await interaction.response.send_message("진행 중인 탐사가 없다.", ephemeral=True)
         return
-
-    if main_active and daily_active:
-        target_mode = db.get_last_expedition_mode(guild_id, user_id)
-        if target_mode not in ("main", "daily"):
-            target_mode = "daily"
-    elif daily_active:
-        target_mode = "daily"
-    else:
-        target_mode = "main"
+    target_mode = db.get_last_expedition_mode(guild_id, user_id)
+    if target_mode not in modes:
+        target_mode = modes[-1]
 
     if target_mode == "daily":
         player, character_key = daily_forfeit_player(guild_id, user_id, daily_record, daily_session)
         await interaction.response.send_message(
             embed=forfeit_embed(player, character_key, "daily"),
             view=ForfeitConfirmView(guild_id, user_id, "daily"),
+            ephemeral=True,
+        )
+        return
+
+    if target_mode == "endless" and endless_session is not None:
+        player = session_player(endless_session)
+        character_key = session_character_key(endless_session)
+        await interaction.response.send_message(
+            embed=forfeit_embed(player, character_key, "endless"),
+            view=ForfeitConfirmView(guild_id, user_id, "endless"),
             ephemeral=True,
         )
         return
@@ -6966,26 +7582,109 @@ async def tutorial(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="상태", description="현재 장비와 자원을 확인한다.")
-async def status(interaction: discord.Interaction):
-    if interaction.guild_id is None:
-        await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있다.",
-            ephemeral=True,
-        )
-        return
+def active_expedition_modes(guild_id: int, user_id: int):
+    p = db.get_player(guild_id, user_id)
+    main_active = p.status in ("playing", "dead") and not (p.status == "dead" and p.lives_used >= MAX_DAILY_LIVES)
+    daily_record, daily_session = daily_forfeit_state(guild_id, user_id)
+    daily_active = daily_record is not None
+    endless_session = get_endless_session(guild_id, user_id) if full_version_allowed(user_id) else None
+    endless_active = endless_session is not None
+    modes = []
+    if main_active:
+        modes.append("main")
+    if daily_active:
+        modes.append("daily")
+    if endless_active:
+        modes.append("endless")
+    return modes, p, daily_record, daily_session, endless_session
 
-    p = db.get_player(interaction.guild_id, interaction.user.id)
-    embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
-    expedition_ended = p.status == "ready" or (p.status == "dead" and p.lives_used >= MAX_DAILY_LIVES)
-    if expedition_ended:
-        embed.description = "지금은 진행 중인 탐사가 없다!"
-    else:
-        add_status_fields(embed, p)
-        embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
+
+def status_embed_for_mode(guild: discord.Guild, user_id: int, mode: str) -> discord.Embed:
+    modes, main_player, daily_record, daily_session, endless_session = active_expedition_modes(guild.id, user_id)
+    member = guild.get_member(user_id)
+    display_name = member.display_name if member else f"<@{user_id}>"
+    labels = {"main": "일반", "daily": "데일리", "endless": "엔드리스"}
+    embed = discord.Embed(title=f"{display_name} — 상태 · {labels.get(mode, '일반')}")
+    if mode not in modes:
+        embed.description = "이 모드에는 진행 중인 탐사가 없다."
+        return embed
+    if mode == "daily":
+        player, _ = daily_forfeit_player(guild.id, user_id, daily_record, daily_session)
+        add_status_fields(embed, player)
+        embed.set_footer(text=f"데일리 · {today_key()}")
+        return embed
+    if mode == "endless" and endless_session is not None:
+        player = session_player(endless_session)
+        add_status_fields(embed, player)
+        embed.set_footer(text="엔드리스 · 엔딩 없음 · 별도 세이브")
+        return embed
+    add_status_fields(embed, main_player)
+    embed.set_footer(text=f"일반 · {main_player.last_day or '미시작'} · {main_player.status}")
+    return embed
+
+
+class StatusModeView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, active_mode: str, modes):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.active_mode = active_mode
+        self.modes = tuple(modes)
+        labels = {"main": "일반", "daily": "데일리", "endless": "엔드리스"}
+        for mode in self.modes:
+            button = discord.ui.Button(
+                label=labels[mode],
+                style=discord.ButtonStyle.primary if mode == active_mode else discord.ButtonStyle.secondary,
+                disabled=mode == active_mode,
+            )
+
+            async def callback(interaction: discord.Interaction, selected=mode):
+                if interaction.guild is None:
+                    await interaction.response.defer()
+                    return
+                current_modes, *_ = active_expedition_modes(self.guild_id, self.user_id)
+                await interaction.response.edit_message(
+                    embed=status_embed_for_mode(interaction.guild, self.user_id, selected),
+                    view=StatusModeView(self.guild_id, self.user_id, selected, current_modes),
+                )
+
+            button.callback = callback
+            self.add_item(button)
+        close = discord.ui.Button(label="닫기", style=discord.ButtonStyle.secondary)
+
+        async def close_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+            self.stop()
+
+        close.callback = close_callback
+        self.add_item(close)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id or interaction.guild_id != self.guild_id:
+            await interaction.response.defer()
+            return False
+        return True
+
+
+@bot.tree.command(name="상태", description="일반·데일리·엔드리스 탐사 상태를 확인한다.")
+async def status(interaction: discord.Interaction):
+    if interaction.guild_id is None or interaction.guild is None:
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
+        return
+    modes, *_ = active_expedition_modes(interaction.guild_id, interaction.user.id)
+    if not modes:
+        embed = discord.Embed(title=f"{interaction.user.display_name} — 상태", description="지금은 진행 중인 탐사가 없다!")
+        await interaction.response.send_message(embed=embed, view=StatusCloseView(interaction.user.id), ephemeral=True)
+        return
+    last_mode = db.get_last_expedition_mode(interaction.guild_id, interaction.user.id)
+    active_mode = last_mode if last_mode in modes else modes[0]
     await interaction.response.send_message(
-        embed=embed,
-        view=StatusCloseView(interaction.user.id),
+        embed=status_embed_for_mode(interaction.guild, interaction.user.id, active_mode),
+        view=StatusModeView(interaction.guild_id, interaction.user.id, active_mode, modes),
         ephemeral=True,
     )
 
@@ -7012,6 +7711,9 @@ def ranked_lines(rows, guild: discord.Guild, kind: str):
         elif kind == "clears":
             _, total_clears, _ = row
             lines.append(f"{rank_mark} {name} — 🏁 **{total_clears}회**")
+        elif kind == "endless":
+            _, floor_number, coins = row
+            lines.append(f"{rank_mark} {name} — ♾️ 🪜 **{floor_number}층** · 🪙 {small_number(coins)}")
         else:
             _, floor_number, coins = row
             lines.append(f"{rank_mark} {name} — 🪜 **{floor_number}층** · 🪙 {small_number(coins)}")
@@ -7026,6 +7728,12 @@ def full_leaderboard_embed(guild: discord.Guild, mode: str = "overview") -> disc
             title="순위표 · 데일리",
             description="\n".join(ranked_lines(rows, guild, "daily")),
         )
+    if mode == "endless":
+        rows = db.endless_ranking(guild.id, 25)
+        return discord.Embed(
+            title="순위표 · 엔드리스",
+            description="\n".join(ranked_lines(rows, guild, "endless")),
+        )
     if mode == "clears":
         rows = db.total_clear_ranking(guild.id, 25)
         return discord.Embed(
@@ -7033,11 +7741,17 @@ def full_leaderboard_embed(guild: discord.Guild, mode: str = "overview") -> disc
             description="\n".join(ranked_lines(rows, guild, "clears")),
         )
     daily_rows = db.daily_ranking(guild.id, day_key, 5)
+    endless_rows = db.endless_ranking(guild.id, 5)
     clear_rows = db.total_clear_ranking(guild.id, 5)
     embed = discord.Embed(title="순위표")
     embed.add_field(
         name="오늘의 데일리",
         value="\n".join(ranked_lines(daily_rows, guild, "daily")),
+        inline=False,
+    )
+    embed.add_field(
+        name="엔드리스",
+        value="\n".join(ranked_lines(endless_rows, guild, "endless")),
         inline=False,
     )
     embed.add_field(
@@ -7053,46 +7767,27 @@ class LeaderboardView(discord.ui.View):
         super().__init__(timeout=900)
         self.guild_id = guild_id
         self.mode = mode
-        overview = discord.ui.Button(
-            label="요약",
-            style=discord.ButtonStyle.primary if mode == "overview" else discord.ButtonStyle.secondary,
-            disabled=mode == "overview",
-        )
-        daily = discord.ui.Button(
-            label="데일리",
-            style=discord.ButtonStyle.primary if mode == "daily" else discord.ButtonStyle.secondary,
-            disabled=mode == "daily",
-        )
-        clears = discord.ui.Button(
-            label="총 클리어",
-            style=discord.ButtonStyle.primary if mode == "clears" else discord.ButtonStyle.secondary,
-            disabled=mode == "clears",
-        )
-
-        async def switch(interaction: discord.Interaction, next_mode: str):
-            if interaction.guild is None or interaction.guild_id != self.guild_id:
-                await interaction.response.defer()
-                return
-            await interaction.response.edit_message(
-                embed=full_leaderboard_embed(interaction.guild, next_mode),
-                view=LeaderboardView(self.guild_id, next_mode),
+        buttons = []
+        for value, label in (("overview", "요약"), ("daily", "데일리"), ("endless", "엔드리스"), ("clears", "총 클리어")):
+            button = discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.primary if mode == value else discord.ButtonStyle.secondary,
+                disabled=mode == value,
             )
 
-        async def overview_callback(interaction: discord.Interaction):
-            await switch(interaction, "overview")
+            async def callback(interaction: discord.Interaction, next_mode=value):
+                if interaction.guild is None or interaction.guild_id != self.guild_id:
+                    await interaction.response.defer()
+                    return
+                await interaction.response.edit_message(
+                    embed=full_leaderboard_embed(interaction.guild, next_mode),
+                    view=LeaderboardView(self.guild_id, next_mode),
+                )
 
-        async def daily_callback(interaction: discord.Interaction):
-            await switch(interaction, "daily")
-
-        async def clears_callback(interaction: discord.Interaction):
-            await switch(interaction, "clears")
-
-        overview.callback = overview_callback
-        daily.callback = daily_callback
-        clears.callback = clears_callback
-        self.add_item(overview)
-        self.add_item(daily)
-        self.add_item(clears)
+            button.callback = callback
+            buttons.append(button)
+        for button in buttons:
+            self.add_item(button)
 
 
 @bot.tree.command(name="랭킹", description="순위를 확인한다.")
