@@ -3662,7 +3662,7 @@ async def cue_sequence(interaction, session, kind, token):
             if session.cue_token != token or session.ended or session.phase != kind:
                 return
 
-            is_fake = session.fake_enabled and random.random() < 0.48
+            is_fake = full_version_allowed(session.user_id) and session.fake_enabled and random.random() < 0.48
             session.cue_state = "fake" if is_fake else "waiting"
             line = random.choice(fakeouts if is_fake else flavor)
             p = session_player(session)
