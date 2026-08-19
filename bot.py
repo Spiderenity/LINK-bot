@@ -103,6 +103,13 @@ SUPERSCRIPT_TRANS = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹�
 def small_number(value) -> str:
     return str(value).translate(SUPERSCRIPT_TRANS)
 
+
+def korean_josa(text: str, consonant: str, vowel: str) -> str:
+    for ch in reversed(text):
+        if "가" <= ch <= "힣":
+            return consonant if (ord(ch) - 0xAC00) % 28 else vowel
+    return vowel
+
 NORMAL_ENEMIES = ("크랩", "옥토퍼스", "스퀴드")
 NORMAL_GEAR_NAMES = {
     "weapon": ("유리 파편", "금속 파이프", "깨진 칼날", "고장 난 절단기", "비상 신호총"),
@@ -124,16 +131,16 @@ CHARACTERS = {
     CHARACTER_BASIC: {
         "name": "기본",
         "description": "특별한 능력이 없다.",
-        "ability": "가장 평범한 탐사자.",
+        "ability": "가장 평범한 탐사자다.",
     },
     CHARACTER_VAMPIRE: {
         "name": "흡혈",
-        "description": "피를 흘리게 하고 상처를 회복하는 탐사자.",
+        "description": "피를 흘리게 하고 상처를 회복하는 탐사자다.",
         "ability": "직접 공격으로 출혈을 내는 데 성공하면 50% 확률로 HP를 1 회복한다.",
     },
     CHARACTER_BOMBER: {
         "name": "폭발광",
-        "description": "폭발물을 유난히 잘 다루는 탐사자.",
+        "description": "폭발물을 유난히 잘 다루는 탐사자다.",
         "ability": "폭탄 10개로 시작한다. 폭탄 피해가 2 증가하고 폭탄 수급량이 늘어난다.",
     },
     CHARACTER_SCRAPPER: {
@@ -163,7 +170,7 @@ CHARACTERS = {
     },
     CHARACTER_CHAOS: {
         "name": "혼돈",
-        "description": "다른 무기를 사용할 수 없는 변칙적인 탐사자.",
+        "description": "다른 무기를 사용할 수 없는 변칙적인 탐사자다.",
         "ability": "혼돈의 검으로 시작한다. 직접 공격이 적중할 때마다 검의 효과가 무작위로 발동한다.",
     },
 }
@@ -693,6 +700,17 @@ class Database:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS expedition_activity (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    last_mode TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
             run_meta_columns = {
                 row[1] for row in con.execute("PRAGMA table_info(run_meta)").fetchall()
             }
@@ -1064,7 +1082,7 @@ class Database:
     def increment_user_meta(self, user_id: int, field: str, amount: int = 1):
         allowed = {"bomb_uses", "gear_discards", "pots_broken", "secrets_found", "perfect_count", "flawless_true_endings"}
         if field not in allowed:
-            raise ValueError("알 수 없는 메타 기록입니다.")
+            raise ValueError("알 수 없는 메타 기록이다.")
         with self.connect() as con:
             con.execute(
                 "INSERT OR IGNORE INTO user_meta (user_id) VALUES (?)",
@@ -1160,6 +1178,32 @@ class Database:
             )
             con.commit()
 
+    def mark_expedition_activity(self, guild_id: int, user_id: int, mode: str):
+        if mode not in ("main", "daily"):
+            return
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO expedition_activity (guild_id, user_id, last_mode, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    last_mode=excluded.last_mode,
+                    updated_at=excluded.updated_at
+                """,
+                (guild_id, user_id, mode, datetime.now(KST).isoformat(timespec="microseconds")),
+            )
+            con.commit()
+
+    def get_last_expedition_mode(self, guild_id: int, user_id: int):
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT last_mode FROM expedition_activity WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
+            ).fetchone()
+        if row is None or row[0] not in ("main", "daily"):
+            return None
+        return str(row[0])
+
     def leaderboard(self, guild_id: int, limit: int = 10):
         with self.connect() as con:
             return con.execute(
@@ -1168,6 +1212,23 @@ class Database:
                 FROM players
                 WHERE guild_id=?
                 ORDER BY floor_number DESC, coins DESC, user_id ASC
+                LIMIT ?
+                """,
+                (guild_id, limit),
+            ).fetchall()
+
+    def total_clear_ranking(self, guild_id: int, limit: int = 25):
+        with self.connect() as con:
+            return con.execute(
+                """
+                SELECT p.user_id,
+                       COALESCE(m.ending15_count, 0) + COALESCE(m.true_ending_count, 0) AS total_clears,
+                       COALESCE(m.true_ending_count, 0) AS true_endings
+                FROM players p
+                LEFT JOIN user_meta m ON m.user_id=p.user_id
+                WHERE p.guild_id=?
+                  AND COALESCE(m.ending15_count, 0) + COALESCE(m.true_ending_count, 0) > 0
+                ORDER BY total_clears DESC, true_endings DESC, p.user_id ASC
                 LIMIT ?
                 """,
                 (guild_id, limit),
@@ -1297,7 +1358,7 @@ def chaos_attack_effect(player: PlayerState, session: GameSession, enemy: Enemy,
         return 0, "", False, 0
     effect = random.choice(("power", "bleed", "heal"))
     if effect == "power":
-        return 3, "🌀 혼돈의 검이 난폭하게 진동한다. **추가 3 피해!**", False, 0
+        return 3, "🌀 혼돈의 검이 난폭하게 진동한다. **추가로 3 피해를 줬다!**", False, 0
     if effect == "bleed":
         return 0, "🌀 혼돈의 검이 상처를 찢어 놓는다.", True, 0
     before = player.hp
@@ -1541,7 +1602,7 @@ def player_from_state_data(data):
     weapon = gear_from_state(data.get("weapon"))
     shield = gear_from_state(data.get("shield"))
     if weapon is None or shield is None:
-        raise ValueError("저장된 플레이어 장비가 올바르지 않습니다.")
+        raise ValueError("저장된 플레이어 장비가 올바르지 않다.")
     return PlayerState(
         guild_id=int(data["guild_id"]),
         user_id=int(data["user_id"]),
@@ -1599,13 +1660,13 @@ def session_from_state(guild_id: int, user_id: int, raw: str):
         room = room_from_state(room_data)
         rooms[room.pos] = room
     if not rooms:
-        raise ValueError("저장된 맵에 방이 없습니다.")
+        raise ValueError("저장된 맵에 방이 없다.")
     current = tuple(int(v) for v in data.get("current", (0, 0)))
     boss_pos = tuple(int(v) for v in data["boss_pos"])
     secret_pos = tuple(int(v) for v in data["secret_pos"])
     secret_from = tuple(int(v) for v in data["secret_from"])
     if current not in rooms or boss_pos not in rooms or secret_pos not in rooms:
-        raise ValueError("저장된 맵 좌표가 올바르지 않습니다.")
+        raise ValueError("저장된 맵 좌표가 올바르지 않다.")
     previous_data = data.get("previous")
     previous = tuple(int(v) for v in previous_data) if previous_data is not None else None
     session = GameSession(
@@ -1647,6 +1708,7 @@ def persist_session(session: GameSession):
         return
     try:
         if session.is_daily:
+            db.mark_expedition_activity(session.guild_id, session.user_id, "daily")
             p = session_player(session)
             db.record_daily_progress(
                 session.guild_id,
@@ -1663,10 +1725,11 @@ def persist_session(session: GameSession):
         if session.ended:
             db.delete_run(session.guild_id, session.user_id)
             return
+        db.mark_expedition_activity(session.guild_id, session.user_id, "main")
         raw = json.dumps(session_state(session), ensure_ascii=False, separators=(",", ":"))
         db.save_run(session.guild_id, session.user_id, session.day_key, session.floor_number, raw)
     except Exception as exc:
-        print(f"맵 저장에 실패했습니다: {type(exc).__name__}: {exc}")
+        print(f"맵 저장에 실패했다: {type(exc).__name__}: {exc}")
 
 
 def load_persisted_daily_session(guild_id: int, user_id: int, day_key: str):
@@ -1680,10 +1743,10 @@ def load_persisted_daily_session(guild_id: int, user_id: int, day_key: str):
     try:
         session = session_from_state(guild_id, user_id, raw)
         if not session.is_daily or int(saved_floor) != int(session.floor_number):
-            raise ValueError("저장된 데일리 상태가 올바르지 않습니다.")
+            raise ValueError("저장된 데일리 상태가 올바르지 않다.")
         return session
     except Exception as exc:
-        print(f"저장된 데일리를 불러오지 못했습니다: {type(exc).__name__}: {exc}")
+        print(f"저장된 데일리를 불러오지 못했다: {type(exc).__name__}: {exc}")
         db.delete_daily_run(guild_id, user_id)
         return None
 
@@ -1699,7 +1762,7 @@ def load_persisted_session(guild_id: int, user_id: int, day_key: str, floor_numb
     try:
         return session_from_state(guild_id, user_id, raw)
     except Exception as exc:
-        print(f"저장된 맵을 불러오지 못했습니다: {type(exc).__name__}: {exc}")
+        print(f"저장된 맵을 불러오지 못했다: {type(exc).__name__}: {exc}")
         db.delete_run(guild_id, user_id)
         return None
 
@@ -2709,7 +2772,7 @@ def exploration_embed(player, session, note="", footer_status=""):
     if session.boss_defeated:
         if session.is_tutorial:
             if not session.tutorial_replay and session.current == session.boss_pos:
-                footer_lines.append("⚠️ 튜토리얼의 아이템은 사라져요!")
+                footer_lines.append("⚠️ 튜토리얼의 아이템은 사라진다!")
         elif session.current == session.boss_pos:
             footer_lines.append("보스를 처치했다!")
             if full_version_allowed(session.user_id) and session.floor_number == 15:
@@ -3269,7 +3332,7 @@ class LootView(OwnerView):
             await show_after_clear(
                 interaction,
                 session,
-                f"{gear.display_name()} 장착 완료.",
+                f"{gear.display_name()}{korean_josa(gear.display_name(), '을', '를')} 장착했다.",
             )
 
         async def skip_callback(interaction):
@@ -3720,7 +3783,7 @@ async def move_player(interaction, session, direction, target):
 
     if room.kind in ("normal", "boss") and not room.cleared:
         session.phase = "battle_ready"
-        encounter_note = f"**{enemy_display_name(room.enemy)}**이(가) 나타났다!"
+        encounter_note = f"**{enemy_display_name(room.enemy)}**{korean_josa(enemy_display_name(room.enemy), '이', '가')} 나타났다!"
         await interaction.response.edit_message(
             embed=combat_embed(
                 p,
@@ -3934,7 +3997,7 @@ async def start_battle(interaction, session):
         embed=combat_embed(
             p,
             session,
-            "**전투 시작!**\n신호를 잘 보고 누르세요.",
+            "**전투를 시작한다!**\n신호에 맞춰 버튼을 누르자.",
         ),
         view=CombatView(session, "attack"),
     )
@@ -4641,7 +4704,7 @@ async def climb_next_floor(interaction, session):
             embed=exploration_embed(
                 p,
                 new_session,
-                "**1층 시작!**",
+                "**1층 탐사를 시작한다!**",
             ),
             view=ExploreView(new_session),
         )
@@ -4716,7 +4779,7 @@ async def climb_next_floor(interaction, session):
         embed=exploration_embed(
             p,
             new_session,
-            f"**{p.floor_number}층 시작!**",
+            f"**{p.floor_number}층 탐사를 시작한다!**",
         ),
         view=ExploreView(new_session),
     )
@@ -4809,14 +4872,14 @@ async def confirm_magic_gear(interaction, session, index, price):
         await debug_return_to_panel(
             interaction,
             session,
-            f"**{gear.display_name()}** 구입 및 장착 완료.",
+            f"**{gear.display_name()}**{korean_josa(gear.display_name(), '을', '를')} 구입하고 장착했다.",
         )
         return
     await interaction.response.edit_message(
         embed=exploration_embed(
             p,
             session,
-            f"**{gear.display_name()}** 구입 및 장착 완료.",
+            f"**{gear.display_name()}**{korean_josa(gear.display_name(), '을', '를')} 구입하고 장착했다.",
         ),
         view=ExploreView(session),
     )
@@ -4870,7 +4933,7 @@ async def confirm_shop_gear(interaction, session, index, price):
         embed=shop_embed(
             p,
             session,
-            f"**{gear.display_name()}** 구입 및 장착 완료.",
+            f"**{gear.display_name()}**{korean_josa(gear.display_name(), '을', '를')} 구입하고 장착했다.",
         ),
         view=ShopView(session),
     )
@@ -4960,7 +5023,7 @@ async def play_slot(interaction, session):
     else:
         coin_gain = daily_coin_gain(session, random.randint(6, 10) + reward_bonus * 2)
         p.coins += coin_gain
-        note = "🎰 잭팟!"
+        note = "🎰 잭팟이 나왔다!"
 
     if coin_gain:
         footer_lines.insert(0, f"🪙 코인을 {coin_gain}개 획득했다!")
@@ -5057,24 +5120,24 @@ def worksheet_title_for_guild(guild: discord.Guild) -> str:
 
 def sync_players_to_google_sheet(rows: list[list[object]], worksheet_title: str):
     if not GOOGLE_SHEET_ID:
-        raise RuntimeError("GOOGLE_SHEET_ID가 설정되어 있지 않습니다.")
+        raise RuntimeError("GOOGLE_SHEET_ID가 설정되어 있지 않다.")
 
     try:
         import gspread
     except ImportError as exc:
-        raise RuntimeError("gspread가 설치되어 있지 않습니다. `pip install gspread`가 필요합니다.") from exc
+        raise RuntimeError("gspread가 설치되어 있지 않다. `pip install gspread`가 필요하다.") from exc
 
     if GOOGLE_SERVICE_ACCOUNT_JSON:
         try:
             credentials = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON 형식이 올바르지 않습니다.") from exc
+            raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON 형식이 올바르지 않다.") from exc
         client = gspread.service_account_from_dict(credentials)
     elif GOOGLE_SERVICE_ACCOUNT_FILE:
         client = gspread.service_account(filename=GOOGLE_SERVICE_ACCOUNT_FILE)
     else:
         raise RuntimeError(
-            "GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_SERVICE_ACCOUNT_FILE이 필요합니다."
+            "GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_SERVICE_ACCOUNT_FILE이 필요하다."
         )
 
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
@@ -5263,15 +5326,15 @@ class DebugFloorModal(discord.ui.Modal, title="층 이동"):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not debug_allowed(interaction) or interaction.user.id != self.user_id or interaction.guild_id is None:
-            await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+            await interaction.response.send_message("사용할 수 없는 디버그 명령이다.", ephemeral=True)
             return
         try:
             floor_number = int(str(self.floor_input.value).strip())
         except ValueError:
-            await interaction.response.send_message("층은 숫자로 입력해 주세요.", ephemeral=True)
+            await interaction.response.send_message("층에는 숫자를 입력해야 한다.", ephemeral=True)
             return
         if floor_number < 1 or floor_number > 999:
-            await interaction.response.send_message("층은 1~999 사이로 입력해 주세요.", ephemeral=True)
+            await interaction.response.send_message("층은 1~999 사이여야 한다.", ephemeral=True)
             return
         await debug_show_floor(interaction, floor_number)
 
@@ -5293,7 +5356,7 @@ class DebugGearSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not debug_allowed(interaction) or interaction.guild_id is None:
-            await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+            await interaction.response.send_message("사용할 수 없는 디버그 명령이다.", ephemeral=True)
             return
         p = db.get_player(interaction.guild_id, interaction.user.id)
         kind = self.values[0]
@@ -5375,7 +5438,7 @@ class DebugView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id or not debug_allowed(interaction):
             if not interaction.response.is_done():
-                await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+                await interaction.response.send_message("사용할 수 없는 디버그 명령이다.", ephemeral=True)
             return False
         return True
 
@@ -5388,7 +5451,7 @@ class DebugView(discord.ui.View):
 
     async def run_action(self, interaction: discord.Interaction, action: str):
         if interaction.guild_id is None:
-            await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+            await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
             return
         if action == "floor":
             await interaction.response.send_modal(DebugFloorModal(self.user_id))
@@ -5447,7 +5510,7 @@ class DebugView(discord.ui.View):
 async def require_full_version(interaction: discord.Interaction) -> bool:
     if full_version_allowed(interaction.user.id):
         return True
-    message = "🔒 풀 버전 기능입니다. `/인증`으로 풀 버전을 해금할 수 있습니다."
+    message = "🔒 풀 버전 기능이다. `/풀버전`으로 풀 버전을 해금할 수 있다."
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=True)
     else:
@@ -5458,22 +5521,22 @@ async def require_full_version(interaction: discord.Interaction) -> bool:
 class FullAccessModal(discord.ui.Modal, title="풀 버전 인증"):
     password = discord.ui.TextInput(
         label="비밀번호",
-        placeholder="비밀번호를 입력하세요.",
+        placeholder="비밀번호 입력",
         max_length=100,
     )
 
     async def on_submit(self, interaction: discord.Interaction):
         if full_version_allowed(interaction.user.id):
-            await interaction.response.send_message("이미 풀 버전이 해금되어 있습니다.", ephemeral=True)
+            await interaction.response.send_message("이미 풀 버전이 해금되어 있다.", ephemeral=True)
             return
         if not FULL_VERSION_PASSWORD:
-            await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않습니다.", ephemeral=True)
+            await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않다.", ephemeral=True)
             return
         if str(self.password.value) != FULL_VERSION_PASSWORD:
-            await interaction.response.send_message("비밀번호가 맞지 않습니다.", ephemeral=True)
+            await interaction.response.send_message("비밀번호가 맞지 않다.", ephemeral=True)
             return
         db.grant_full_access(interaction.user.id)
-        await interaction.response.send_message("✅ 풀 버전이 해금되었습니다.", ephemeral=True)
+        await interaction.response.send_message("✅ 풀 버전이 해금되었다!", ephemeral=True)
 
 
 def character_select_embed(user_id: int, selected_key: str = CHARACTER_BASIC, fake_enabled: bool = False) -> discord.Embed:
@@ -5497,10 +5560,10 @@ async def start_full_run(interaction: discord.Interaction, character_key: str, f
     if not await require_full_version(interaction):
         return
     if interaction.guild_id is None:
-        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
         return
     if not character_unlocked(interaction.user.id, character_key):
-        await interaction.response.send_message("아직 해금되지 않은 캐릭터입니다.", ephemeral=True)
+        await interaction.response.send_message("아직 해금되지 않은 캐릭터다.", ephemeral=True)
         return
     key = (interaction.guild_id, interaction.user.id)
     old = sessions.pop(key, None)
@@ -5514,11 +5577,12 @@ async def start_full_run(interaction: discord.Interaction, character_key: str, f
     discover_equipped_tools(p)
     session = generate_floor(interaction.guild_id, interaction.user.id, today_key(), 1)
     sessions[key] = session
+    db.mark_expedition_activity(interaction.guild_id, interaction.user.id, "main")
     await interaction.response.edit_message(
         embed=exploration_embed(
             p,
             session,
-            f"`{CHARACTERS[character_key]['name']}`으로 **1층 시작!**",
+            f"`{CHARACTERS[character_key]['name']}`으로 **1층 탐사를 시작한다!**",
         ),
         view=ExploreView(session),
     )
@@ -5674,7 +5738,7 @@ def reincarnation_embed(player: PlayerState, session: GameSession, selected_kind
         marker = "→ " if kind == selected_kind else ""
         lines.append(f"{marker}`{slot}` · {gear.label()}")
     embed.add_field(name="계승할 장비", value="\n".join(lines), inline=False)
-    embed.set_footer(text="한 런에 한 번만 환생할 수 있다.")
+    embed.set_footer(text="한 탐사에 한 번만 환생할 수 있다.")
     return embed
 
 
@@ -5687,14 +5751,14 @@ async def perform_reincarnation(interaction: discord.Interaction, session: GameS
     run_meta = db.get_run_meta(session.guild_id, session.user_id)
     if run_meta["reincarnated"]:
         await interaction.response.edit_message(
-            embed=exploration_embed(session_player(session), session, "이 런에서는 이미 환생했다."),
+            embed=exploration_embed(session_player(session), session, "이 탐사에서는 이미 환생했다."),
             view=ExploreView(session),
         )
         return
     p = session_player(session)
     gear = equipped_gear(p, selected_kind)
     if gear is None:
-        await interaction.response.send_message("계승할 장비가 없습니다.", ephemeral=True)
+        await interaction.response.send_message("계승할 장비가 없다.", ephemeral=True)
         return
     carried = Gear.from_json(gear.to_json())
     character_key = run_meta["character_key"]
@@ -5716,7 +5780,7 @@ async def perform_reincarnation(interaction: discord.Interaction, session: GameS
         embed=exploration_embed(
             p,
             new_session,
-            f"⛲ `{carried.display_name()}`을(를) 가지고 **1층으로 환생했다.**",
+            f"⛲ `{carried.display_name()}`{korean_josa(carried.display_name(), '을', '를')} 가지고 **1층으로 환생했다.**",
         ),
         view=ExploreView(new_session),
     )
@@ -5728,7 +5792,7 @@ async def open_reincarnation(interaction: discord.Interaction, session: GameSess
     run_meta = db.get_run_meta(session.guild_id, session.user_id)
     if run_meta["reincarnated"]:
         await interaction.response.edit_message(
-            embed=exploration_embed(session_player(session), session, "이 런에서는 이미 환생했다."),
+            embed=exploration_embed(session_player(session), session, "이 탐사에서는 이미 환생했다."),
             view=ExploreView(session),
         )
         return
@@ -6040,7 +6104,6 @@ def daily_embed(day_key: str, user_id: int, guild: Optional[discord.Guild] = Non
         inline=False,
     )
     embed.add_field(name="목표", value="🪜 **10층**", inline=False)
-    embed.add_field(name="오늘의 랭킹", value="\n".join(daily_ranking_lines(guild, day_key)), inline=False)
     embed.set_footer(text="하루 한 번 도전할 수 있다. 날짜가 바뀌면 캐릭터와 규칙도 바뀐다.")
     return embed
 
@@ -6089,14 +6152,7 @@ class DailyResultView(discord.ui.View):
         self.guild_id = guild_id
         self.user_id = user_id
         self.day_key = day_key
-        ranking = discord.ui.Button(label="랭킹", emoji="🏆", style=discord.ButtonStyle.secondary)
         close = discord.ui.Button(label="닫기", style=discord.ButtonStyle.secondary)
-
-        async def ranking_callback(interaction: discord.Interaction):
-            await interaction.response.edit_message(
-                embed=daily_embed(self.day_key, self.user_id, interaction.guild),
-                view=DailyLobbyView(self.guild_id, self.user_id, self.day_key),
-            )
 
         async def close_callback(interaction: discord.Interaction):
             await interaction.response.defer()
@@ -6106,9 +6162,7 @@ class DailyResultView(discord.ui.View):
                 pass
             self.stop()
 
-        ranking.callback = ranking_callback
         close.callback = close_callback
-        self.add_item(ranking)
         self.add_item(close)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -6203,6 +6257,7 @@ async def start_or_continue_daily(interaction: discord.Interaction, day_key: str
             profile["rule"],
         )
     daily_sessions[key] = session
+    db.mark_expedition_activity(guild_id, user_id, "daily")
     p = session_player(session)
     room = session.room()
     if room.kind in ("normal", "boss") and not room.cleared:
@@ -6221,53 +6276,143 @@ async def start_or_continue_daily(interaction: discord.Interaction, day_key: str
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-def forfeit_embed(player: PlayerState, character_key: str) -> discord.Embed:
+def forfeit_embed(player: PlayerState, character_key: str, mode: str) -> discord.Embed:
+    is_daily = mode == "daily"
     embed = discord.Embed(
         title="탐사 포기",
-        description="현재 탐사를 포기할까?",
+        description="**데일리 탐사를 포기합니다.**" if is_daily else "**메인 탐사를 포기합니다.**",
     )
-    embed.add_field(
-        name="현재 런",
-        value=(
-            f"캐릭터 · `{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`\n"
-            f"🪜 **{player.floor_number}층** · 👑 {small_number(player.highest_floor)}"
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="도감과 해금 기록은 유지된다.")
+    if is_daily:
+        embed.add_field(
+            name="현재 탐사",
+            value=f"🪜 **{player.floor_number}층** · 🪙 {small_number(player.coins)}",
+            inline=False,
+        )
+        embed.set_footer(text="포기하면 오늘은 다시 데일리에 도전할 수 없다.")
+    else:
+        if full_version_allowed(player.user_id):
+            embed.add_field(
+                name="현재 탐사",
+                value=(
+                    f"캐릭터 · `{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`\n"
+                    f"🪜 **{player.floor_number}층** · 👑 {small_number(player.highest_floor)}"
+                ),
+                inline=False,
+            )
+            embed.set_footer(text="도감과 해금 기록은 유지된다.")
+        else:
+            embed.add_field(
+                name="현재 탐사",
+                value=f"🪜 **{player.floor_number}층** · 🪙 {small_number(player.coins)}",
+                inline=False,
+            )
+            embed.set_footer(text="포기하면 오늘은 더 이상 탐사할 수 없다.")
     return embed
 
 
+def daily_forfeit_state(guild_id: int, user_id: int):
+    day_key = today_key()
+    record = db.get_daily_record(guild_id, day_key, user_id)
+    if record is None or record["finished"]:
+        return None, None
+    key = (guild_id, user_id)
+    session = daily_sessions.get(key)
+    if session is not None and (session.ended or session.day_key != day_key):
+        cancel_cue(session)
+        cancel_bleed(session, clear=True)
+        daily_sessions.pop(key, None)
+        session = None
+    if session is None:
+        session = load_persisted_daily_session(guild_id, user_id, day_key)
+        if session is not None:
+            daily_sessions[key] = session
+    return record, session
+
+
+async def perform_main_forfeit(interaction: discord.Interaction, guild_id: int, user_id: int):
+    p = db.get_player(guild_id, user_id)
+    full_access = full_version_allowed(user_id)
+    character_key = current_character_key(guild_id, user_id)
+    key = (guild_id, user_id)
+    old = sessions.pop(key, None)
+    if old:
+        cancel_cue(old)
+        cancel_bleed(old, clear=True)
+        old.ended = True
+    if full_access:
+        mark_full_run_ready(p)
+        description = (
+            f"`{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`의 탐사를 포기했다.\n"
+            "`/게임`으로 새 탐사를 시작할 수 있다."
+        )
+    else:
+        reset_player_after_game_over(p, False)
+        description = "탐사를 포기했다.\n오늘은 더 이상 탐사할 수 없다."
+    await interaction.response.edit_message(
+        embed=discord.Embed(title="탐사 포기", description=description),
+        view=StatusCloseView(user_id),
+    )
+
+
+async def perform_daily_forfeit(interaction: discord.Interaction, guild_id: int, user_id: int):
+    day_key = today_key()
+    record, session = daily_forfeit_state(guild_id, user_id)
+    if record is None:
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="탐사 포기", description="진행 중인 데일리 탐사가 없다."),
+            view=StatusCloseView(user_id),
+        )
+        return
+    if session is not None:
+        p = session_player(session)
+        floor_number = session.floor_number
+        coins = p.coins
+        character_key = session_character_key(session)
+        rule = session.daily_rule
+        session.ended = True
+        cancel_cue(session)
+        cancel_bleed(session, clear=True)
+    else:
+        floor_number = record["floor_number"]
+        coins = record["coins"]
+        character_key = record["character_key"]
+        rule = record["rule"]
+    db.record_daily_progress(
+        guild_id,
+        day_key,
+        user_id,
+        floor_number,
+        coins,
+        character_key,
+        rule,
+        completed=False,
+        finished=True,
+    )
+    db.delete_daily_run(guild_id, user_id)
+    daily_sessions.pop((guild_id, user_id), None)
+    await interaction.response.edit_message(
+        embed=discord.Embed(
+            title="탐사 포기",
+            description="데일리 탐사를 포기했다.\n오늘은 다시 데일리에 도전할 수 없다.",
+        ),
+        view=StatusCloseView(user_id),
+    )
+
+
 class ForfeitConfirmView(discord.ui.View):
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int, mode: str):
         super().__init__(timeout=300)
         self.guild_id = guild_id
         self.user_id = user_id
+        self.mode = mode
         confirm = discord.ui.Button(label="포기", style=discord.ButtonStyle.danger)
         cancel = discord.ui.Button(label="취소", style=discord.ButtonStyle.secondary)
 
         async def confirm_callback(interaction: discord.Interaction):
-            if not await require_full_version(interaction):
-                return
-            p = db.get_player(self.guild_id, self.user_id)
-            character_key = current_character_key(self.guild_id, self.user_id)
-            key = (self.guild_id, self.user_id)
-            old = sessions.pop(key, None)
-            if old:
-                cancel_cue(old)
-                cancel_bleed(old, clear=True)
-                old.ended = True
-            mark_full_run_ready(p)
-            await interaction.response.edit_message(
-                embed=discord.Embed(
-                    title="탐사 포기",
-                    description=(
-                        f"`{CHARACTERS.get(character_key, CHARACTERS[CHARACTER_BASIC])['name']}`의 탐사를 포기했다.\n"
-                        "`/게임`으로 새 탐사를 시작할 수 있다."
-                    ),
-                ),
-                view=StatusCloseView(self.user_id),
-            )
+            if self.mode == "daily":
+                await perform_daily_forfeit(interaction, self.guild_id, self.user_id)
+            else:
+                await perform_main_forfeit(interaction, self.guild_id, self.user_id)
 
         async def cancel_callback(interaction: discord.Interaction):
             await interaction.response.defer()
@@ -6289,6 +6434,31 @@ class ForfeitConfirmView(discord.ui.View):
         return True
 
 
+def daily_forfeit_player(guild_id: int, user_id: int, record, session):
+    if session is not None:
+        return session_player(session), session_character_key(session)
+    player = PlayerState(
+        guild_id=guild_id,
+        user_id=user_id,
+        coins=record["coins"],
+        bombs=0,
+        max_hp=20,
+        hp=20,
+        weapon=Gear.from_json(START_WEAPON.to_json()),
+        ring=None,
+        shield=Gear.from_json(START_SHIELD.to_json()),
+        head=None,
+        last_day=today_key(),
+        status="daily",
+        floor_number=record["floor_number"],
+        highest_floor=record["floor_number"],
+        checkpoint_floor=0,
+        lives_used=0,
+        tutorial_completed=True,
+    )
+    return player, record["character_key"]
+
+
 intents = discord.Intents.default()
 
 
@@ -6300,24 +6470,24 @@ class ShapeGameBot(commands.Bot):
 bot = ShapeGameBot(command_prefix="!", intents=intents)
 
 
-@bot.tree.command(name="인증", description="풀 버전 비밀번호를 입력합니다.")
+@bot.tree.command(name="풀버전", description="풀 버전 비밀번호를 입력한다.")
 async def full_version_auth(interaction: discord.Interaction):
     if full_version_allowed(interaction.user.id):
-        await interaction.response.send_message("이미 풀 버전이 해금되어 있습니다.", ephemeral=True)
+        await interaction.response.send_message("이미 풀 버전이 해금되어 있다.", ephemeral=True)
         return
     if not FULL_VERSION_PASSWORD:
-        await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않습니다.", ephemeral=True)
+        await interaction.response.send_message("풀 버전 비밀번호가 아직 설정되어 있지 않다.", ephemeral=True)
         return
     await interaction.response.send_modal(FullAccessModal())
 
 
-@bot.tree.command(name="디버그", description="개발자용 테스트 패널을 엽니다.")
+@bot.tree.command(name="디버그", description="개발자용 테스트 패널을 연다.")
 async def debug_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
-        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
         return
     if not debug_allowed(interaction):
-        await interaction.response.send_message("사용할 수 없는 디버그 명령입니다.", ephemeral=True)
+        await interaction.response.send_message("사용할 수 없는 디버그 명령이다.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
     try:
@@ -6339,11 +6509,11 @@ async def debug_command(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="게임", description="오늘의 탐색을 시작하거나 이어서 플레이합니다.")
+@bot.tree.command(name="게임", description="탐사를 시작하거나 이어서 진행한다.")
 async def game(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
@@ -6445,11 +6615,12 @@ async def game(interaction: discord.Interaction):
 
         session = generate_floor(guild_id, user_id, today, p.floor_number)
         sessions[key] = session
+        db.mark_expedition_activity(guild_id, user_id, "main")
 
         start_note = (
             f"**체크포인트로 돌아왔다.**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`"
             if p.checkpoint_floor > 0
-            else f"**1층 시작!**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`"
+            else f"**1층 탐사를 시작한다!**\n남은 목숨 `{MAX_DAILY_LIVES}/{MAX_DAILY_LIVES}`"
         )
         await interaction.response.send_message(
             embed=exploration_embed(
@@ -6490,11 +6661,12 @@ async def game(interaction: discord.Interaction):
 
         session = generate_floor(guild_id, user_id, today, p.floor_number)
         sessions[key] = session
+        db.mark_expedition_activity(guild_id, user_id, "main")
         restart_note = (
             f"**체크포인트로 돌아왔다.**\n남은 목숨 `{remaining_lives(p)}/{MAX_DAILY_LIVES}`"
             if p.checkpoint_floor > 0
             else (
-                "**다시 도전!**\n"
+                "**다시 도전하자!**\n"
                 f"남은 목숨 `{remaining_lives(p)}/{MAX_DAILY_LIVES}` · 1층부터 시작한다."
             )
         )
@@ -6522,6 +6694,7 @@ async def game(interaction: discord.Interaction):
             restored_from_disk = True
 
     if old and not old.ended and old.day_key == today:
+        db.mark_expedition_activity(guild_id, user_id, "main")
         room = old.room()
 
         if old.pending_loot is not None:
@@ -6572,6 +6745,7 @@ async def game(interaction: discord.Interaction):
     p.floor_number = max(1, p.floor_number)
     session = generate_floor(guild_id, user_id, today, p.floor_number)
     sessions[key] = session
+    db.mark_expedition_activity(guild_id, user_id, "main")
 
     await interaction.response.send_message(
         embed=exploration_embed(
@@ -6584,10 +6758,10 @@ async def game(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="도감", description="도감을 확인합니다.")
+@bot.tree.command(name="도감", description="도감을 확인한다.")
 async def collection_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
-        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
         return
     await interaction.response.send_message(
         embed=collection_embed(interaction.guild_id, interaction.user.id),
@@ -6596,10 +6770,10 @@ async def collection_command(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="데일리", description="오늘의 데일리 챌린지를 확인합니다.")
+@bot.tree.command(name="데일리", description="오늘의 데일리 챌린지를 확인한다.")
 async def daily_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
-        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
         return
     if not await require_full_version(interaction):
         return
@@ -6611,21 +6785,44 @@ async def daily_command(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="포기", description="현재 탐사를 포기합니다.")
+
+@bot.tree.command(name="포기", description="현재 탐사를 포기한다.")
 async def forfeit_command(interaction: discord.Interaction):
     if interaction.guild_id is None:
-        await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("서버 안에서만 사용할 수 있다.", ephemeral=True)
         return
-    if not await require_full_version(interaction):
+    guild_id = interaction.guild_id
+    user_id = interaction.user.id
+    p = db.get_player(guild_id, user_id)
+    main_active = p.status in ("playing", "dead") and not (p.status == "dead" and p.lives_used >= MAX_DAILY_LIVES)
+    daily_record, daily_session = daily_forfeit_state(guild_id, user_id)
+    daily_active = daily_record is not None
+    if not main_active and not daily_active:
+        await interaction.response.send_message("진행 중인 탐사가 없다.", ephemeral=True)
         return
-    p = db.get_player(interaction.guild_id, interaction.user.id)
-    if p.status not in ("playing", "dead"):
-        await interaction.response.send_message("진행 중인 탐사가 없습니다.", ephemeral=True)
+
+    if main_active and daily_active:
+        target_mode = db.get_last_expedition_mode(guild_id, user_id)
+        if target_mode not in ("main", "daily"):
+            target_mode = "daily"
+    elif daily_active:
+        target_mode = "daily"
+    else:
+        target_mode = "main"
+
+    if target_mode == "daily":
+        player, character_key = daily_forfeit_player(guild_id, user_id, daily_record, daily_session)
+        await interaction.response.send_message(
+            embed=forfeit_embed(player, character_key, "daily"),
+            view=ForfeitConfirmView(guild_id, user_id, "daily"),
+            ephemeral=True,
+        )
         return
-    character_key = current_character_key(interaction.guild_id, interaction.user.id)
+
+    character_key = current_character_key(guild_id, user_id)
     await interaction.response.send_message(
-        embed=forfeit_embed(p, character_key),
-        view=ForfeitConfirmView(interaction.guild_id, interaction.user.id),
+        embed=forfeit_embed(p, character_key, "main"),
+        view=ForfeitConfirmView(guild_id, user_id, "main"),
         ephemeral=True,
     )
 
@@ -6634,7 +6831,7 @@ async def forfeit_command(interaction: discord.Interaction):
 async def tutorial(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
@@ -6663,19 +6860,23 @@ async def tutorial(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="상태", description="현재 장비와 자원을 확인합니다.")
+@bot.tree.command(name="상태", description="현재 장비와 자원을 확인한다.")
 async def status(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
 
     p = db.get_player(interaction.guild_id, interaction.user.id)
     embed = discord.Embed(title=f"{interaction.user.display_name} — 상태")
-    add_status_fields(embed, p)
-    embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
+    expedition_ended = p.status == "ready" or (p.status == "dead" and p.lives_used >= MAX_DAILY_LIVES)
+    if expedition_ended:
+        embed.description = "지금은 진행 중인 탐사가 없다!"
+    else:
+        add_status_fields(embed, p)
+        embed.set_footer(text=f"{p.last_day or '미시작'} · {p.status}")
     await interaction.response.send_message(
         embed=embed,
         view=StatusCloseView(interaction.user.id),
@@ -6683,33 +6884,130 @@ async def status(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="점수판", description="순위를 확인합니다.")
+def ranking_name(guild: discord.Guild, user_id: int) -> str:
+    member = guild.get_member(int(user_id))
+    return member.display_name if member else f"<@{user_id}>"
+
+
+def ranked_lines(rows, guild: discord.Guild, kind: str):
+    if not rows:
+        return ["아직 기록이 없다."]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    lines = []
+    for rank, row in enumerate(rows, 1):
+        rank_mark = medals.get(rank, f"{rank}.")
+        name = ranking_name(guild, int(row[0]))
+        if kind == "daily":
+            _, floor_number, coins, completed, finished = row
+            result = "✅ **10층 클리어**" if completed else f"🪜 **{floor_number}층**"
+            if not finished and not completed:
+                result += " · 진행 중"
+            lines.append(f"{rank_mark} {name} — {result} · 🪙 {small_number(coins)}")
+        elif kind == "clears":
+            _, total_clears, _ = row
+            lines.append(f"{rank_mark} {name} — 🏁 **{total_clears}회**")
+        else:
+            _, floor_number, coins = row
+            lines.append(f"{rank_mark} {name} — 🪜 **{floor_number}층** · 🪙 {small_number(coins)}")
+    return lines
+
+
+def full_leaderboard_embed(guild: discord.Guild, mode: str = "overview") -> discord.Embed:
+    day_key = today_key()
+    if mode == "daily":
+        rows = db.daily_ranking(guild.id, day_key, 25)
+        return discord.Embed(
+            title="순위표 · 데일리",
+            description="\n".join(ranked_lines(rows, guild, "daily")),
+        )
+    if mode == "clears":
+        rows = db.total_clear_ranking(guild.id, 25)
+        return discord.Embed(
+            title="순위표 · 총 클리어",
+            description="\n".join(ranked_lines(rows, guild, "clears")),
+        )
+    daily_rows = db.daily_ranking(guild.id, day_key, 5)
+    clear_rows = db.total_clear_ranking(guild.id, 5)
+    embed = discord.Embed(title="순위표")
+    embed.add_field(
+        name="오늘의 데일리",
+        value="\n".join(ranked_lines(daily_rows, guild, "daily")),
+        inline=False,
+    )
+    embed.add_field(
+        name="총 클리어",
+        value="\n".join(ranked_lines(clear_rows, guild, "clears")),
+        inline=False,
+    )
+    return embed
+
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, guild_id: int, mode: str = "overview"):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.mode = mode
+        overview = discord.ui.Button(
+            label="요약",
+            style=discord.ButtonStyle.primary if mode == "overview" else discord.ButtonStyle.secondary,
+            disabled=mode == "overview",
+        )
+        daily = discord.ui.Button(
+            label="데일리",
+            style=discord.ButtonStyle.primary if mode == "daily" else discord.ButtonStyle.secondary,
+            disabled=mode == "daily",
+        )
+        clears = discord.ui.Button(
+            label="총 클리어",
+            style=discord.ButtonStyle.primary if mode == "clears" else discord.ButtonStyle.secondary,
+            disabled=mode == "clears",
+        )
+
+        async def switch(interaction: discord.Interaction, next_mode: str):
+            if interaction.guild is None or interaction.guild_id != self.guild_id:
+                await interaction.response.defer()
+                return
+            await interaction.response.edit_message(
+                embed=full_leaderboard_embed(interaction.guild, next_mode),
+                view=LeaderboardView(self.guild_id, next_mode),
+            )
+
+        async def overview_callback(interaction: discord.Interaction):
+            await switch(interaction, "overview")
+
+        async def daily_callback(interaction: discord.Interaction):
+            await switch(interaction, "daily")
+
+        async def clears_callback(interaction: discord.Interaction):
+            await switch(interaction, "clears")
+
+        overview.callback = overview_callback
+        daily.callback = daily_callback
+        clears.callback = clears_callback
+        self.add_item(overview)
+        self.add_item(daily)
+        self.add_item(clears)
+
+
+@bot.tree.command(name="랭킹", description="순위를 확인한다.")
 async def leaderboard(interaction: discord.Interaction):
-    if interaction.guild_id is None:
+    if interaction.guild_id is None or interaction.guild is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
 
-    rows = db.leaderboard(interaction.guild_id)
-    lines = []
-
-    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    for rank, (user_id, floor_number, coins) in enumerate(rows, 1):
-        member = interaction.guild.get_member(user_id)
-        name = member.display_name if member else f"<@{user_id}>"
-        if rank == 4:
-            lines.append("")
-        rank_mark = medals.get(rank, f"{rank}.")
-        lines.append(
-            f"{rank_mark} {name} — 🪜 **{floor_number}층** · 🪙 {small_number(coins)}"
+    if full_version_allowed(interaction.user.id):
+        embed = full_leaderboard_embed(interaction.guild)
+        view = LeaderboardView(interaction.guild_id)
+    else:
+        rows = db.leaderboard(interaction.guild_id)
+        embed = discord.Embed(
+            title="진행 순위",
+            description="\n".join(ranked_lines(rows, interaction.guild, "progress")) if rows else "아직 기록이 없다.",
         )
-
-    embed = discord.Embed(
-        title="진행 순위",
-        description="\n".join(lines) if lines else "아직 기록이 없다.",
-    )
+        view = None
 
     old_message_id = db.get_channel_ui_message(
         interaction.guild_id,
@@ -6723,7 +7021,7 @@ async def leaderboard(interaction: discord.Interaction):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, view=view)
     message = await interaction.original_response()
     db.set_channel_ui_message(
         interaction.guild_id,
@@ -6733,7 +7031,7 @@ async def leaderboard(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="주기", description="플레이어에게 아이템을 지급합니다.")
+@bot.tree.command(name="주기", description="플레이어에게 아이템을 지급한다.")
 @discord.app_commands.describe(
     대상="아이템을 받을 플레이어",
     아이템="지급할 아이템",
@@ -6759,7 +7057,7 @@ async def give_item(
 ):
     if interaction.guild is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
@@ -6768,14 +7066,14 @@ async def give_item(
     is_admin = interaction.user.guild_permissions.administrator
     if not (is_owner or is_admin):
         await interaction.response.send_message(
-            "서버 주인 또는 관리자만 사용할 수 있습니다.",
+            "서버 주인 또는 관리자만 사용할 수 있다.",
             ephemeral=True,
         )
         return
 
     if 수량 < 1:
         await interaction.response.send_message(
-            "수량은 1 이상이어야 합니다.",
+            "수량은 1 이상이어야 한다.",
             ephemeral=True,
         )
         return
@@ -6791,13 +7089,13 @@ async def give_item(
     elif 아이템 in ("weapon", "ring", "shield", "head"):
         if 수량 != 1:
             await interaction.response.send_message(
-                "장비는 한 번에 1개만 지급할 수 있습니다.",
+                "장비는 한 번에 1개만 지급할 수 있다.",
                 ephemeral=True,
             )
             return
         if 위력 is not None and 위력 < 0:
             await interaction.response.send_message(
-                "위력은 0 이상이어야 합니다.",
+                "위력은 0 이상이어야 한다.",
                 ephemeral=True,
             )
             return
@@ -6815,26 +7113,26 @@ async def give_item(
         result = f"{slot_name} **{gear.display_name()}** ({stat_name} {gear.power})"
     else:
         await interaction.response.send_message(
-            "알 수 없는 아이템입니다.",
+            "알 수 없는 아이템이다.",
             ephemeral=True,
         )
         return
 
     db.save_player(p)
     await interaction.response.send_message(
-        f"{대상.mention}에게 {result}을(를) 지급했습니다.",
+        f"{대상.mention}에게 {result}{korean_josa(result, '을', '를')} 지급했다.",
         ephemeral=True,
     )
 
 
 @bot.tree.command(
     name="시트업데이트",
-    description="모든 플레이어의 진행 상황을 구글 시트에 업데이트합니다.",
+    description="모든 플레이어의 진행 상황을 구글 시트에 업데이트한다.",
 )
 async def sheet_update(interaction: discord.Interaction):
     if interaction.guild_id is None or interaction.guild is None:
         await interaction.response.send_message(
-            "서버 안에서만 사용할 수 있습니다.",
+            "서버 안에서만 사용할 수 있다.",
             ephemeral=True,
         )
         return
@@ -6893,13 +7191,13 @@ async def sheet_update(interaction: discord.Interaction):
         )
     except Exception as exc:
         await interaction.edit_original_response(
-            content=f"시트 업데이트에 실패했습니다.\n`{type(exc).__name__}: {exc}`"
+            content=f"시트 업데이트에 실패했다.\n`{type(exc).__name__}: {exc}`"
         )
         return
 
     await interaction.edit_original_response(
         content=(
-            f"구글 시트를 업데이트했습니다. **{count}명**의 진행 상황을 반영했습니다.\n"
+            f"구글 시트를 업데이트했다. **{count}명**의 진행 상황을 반영했다.\n"
             f"탭: `{worksheet_title}`\n"
             f"{sheet_url}"
         )
@@ -6910,7 +7208,7 @@ async def sheet_update(interaction: discord.Interaction):
 if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError(
-            "DISCORD_TOKEN이 없습니다. `.env.example`을 복사해 `.env`를 만든 뒤 토큰을 넣어 주세요."
+            "DISCORD_TOKEN이 없다. `.env.example`을 복사해 `.env`를 만든 뒤 토큰을 넣어야 한다."
         )
 
     bot.run(TOKEN)
