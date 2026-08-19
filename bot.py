@@ -5023,7 +5023,7 @@ async def play_slot(interaction, session):
     else:
         coin_gain = daily_coin_gain(session, random.randint(6, 10) + reward_bonus * 2)
         p.coins += coin_gain
-        note = "🎰 잭팟이 나왔다!"
+        note = "🎰 JACKPOT!!"
 
     if coin_gain:
         footer_lines.insert(0, f"🪙 코인을 {coin_gain}개 획득했다!")
