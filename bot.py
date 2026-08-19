@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from aiohttp import web
 
 
 
@@ -29,6 +30,8 @@ GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 DEBUG_USER_ID_RAW = os.getenv("DEBUG_USER_ID", "").strip()
 DEBUG_USER_ID = int(DEBUG_USER_ID_RAW) if DEBUG_USER_ID_RAW.isdigit() else None
 FULL_VERSION_PASSWORD = os.getenv("FULL_VERSION_PASSWORD", "").strip()
+LINKDICE_API_KEY = os.getenv("LINKDICE_API_KEY", "").strip()
+LINK_API_PORT = int(os.getenv("LINK_API_PORT", "8080"))
 KST = ZoneInfo("Asia/Seoul")
 DB_PATH = Path("/data/game.db")
 
@@ -6457,12 +6460,117 @@ def daily_forfeit_player(guild_id: int, user_id: int, record, session):
     return player, record["character_key"]
 
 
+async def linkdice_auth(request: web.Request):
+    if not LINKDICE_API_KEY:
+        raise web.HTTPServiceUnavailable(text="LINKDICE_API_KEY is not configured")
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {LINKDICE_API_KEY}":
+        raise web.HTTPUnauthorized(text="invalid api key")
+
+
+def linkdice_player_payload(player: PlayerState) -> dict:
+    return {
+        "guild_id": player.guild_id,
+        "user_id": player.user_id,
+        "weapon": {
+            "name": player.weapon.display_name(),
+            "power": player.weapon.power,
+        },
+        "ring": (
+            {"name": player.ring.display_name(), "power": player.ring.power}
+            if player.ring is not None
+            else None
+        ),
+        "shield": {
+            "name": player.shield.display_name(),
+            "power": player.shield.power,
+            "hp_bonus": player.shield.hp_bonus,
+        },
+        "head": (
+            {
+                "name": player.head.display_name(),
+                "power": player.head.power,
+                "hp_bonus": player.head.hp_bonus,
+            }
+            if player.head is not None
+            else None
+        ),
+        "attack_power": attack_power(player),
+        "defense_power": defense_power(player),
+        "hp": player.hp,
+        "max_hp": player_max_hp(player),
+        "bombs": player.bombs,
+    }
+
+
+async def linkdice_get_player(request: web.Request):
+    await linkdice_auth(request)
+    try:
+        guild_id = int(request.match_info["guild_id"])
+        user_id = int(request.match_info["user_id"])
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="invalid guild_id or user_id")
+    player = db.get_player(guild_id, user_id)
+    return web.json_response(linkdice_player_payload(player))
+
+
+async def linkdice_patch_player(request: web.Request):
+    await linkdice_auth(request)
+    try:
+        guild_id = int(request.match_info["guild_id"])
+        user_id = int(request.match_info["user_id"])
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="invalid guild_id or user_id")
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="invalid json")
+    player = db.get_player(guild_id, user_id)
+    changed = False
+    if "hp" in body:
+        try:
+            hp = int(body["hp"])
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="hp must be an integer")
+        player.hp = max(0, min(hp, player_max_hp(player)))
+        changed = True
+    if "bombs" in body:
+        try:
+            bombs = int(body["bombs"])
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="bombs must be an integer")
+        player.bombs = max(0, bombs)
+        changed = True
+    if not changed:
+        raise web.HTTPBadRequest(text="hp or bombs is required")
+    db.save_player(player)
+    return web.json_response(linkdice_player_payload(player))
+
+
+async def start_linkdice_api():
+    app = web.Application()
+    app.router.add_get("/linkdice/player/{guild_id}/{user_id}", linkdice_get_player)
+    app.router.add_patch("/linkdice/player/{guild_id}/{user_id}", linkdice_patch_player)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "::", LINK_API_PORT)
+    await site.start()
+    return runner
+
+
 intents = discord.Intents.default()
 
 
 class ShapeGameBot(commands.Bot):
     async def setup_hook(self):
+        self.linkdice_api_runner = await start_linkdice_api()
         await self.tree.sync()
+
+    async def close(self):
+        runner = getattr(self, "linkdice_api_runner", None)
+        if runner is not None:
+            await runner.cleanup()
+        await super().close()
 
 
 bot = ShapeGameBot(command_prefix="!", intents=intents)
