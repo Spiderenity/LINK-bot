@@ -1396,6 +1396,38 @@ endless_sessions: Dict[Tuple[int, int], GameSession] = {}
 debug_messages = {}
 
 
+def session_registry(session: GameSession):
+    if session.is_tutorial:
+        return tutorial_sessions
+    if session.is_daily:
+        return daily_sessions
+    if session.is_endless:
+        return endless_sessions
+    return sessions
+
+
+def session_is_registered(session: GameSession) -> bool:
+    key = (session.guild_id, session.user_id)
+    return session_registry(session).get(key) is session
+
+
+def session_is_current(session: GameSession) -> bool:
+    return not session.ended and session_is_registered(session)
+
+
+def reject_stale_session(session: GameSession, origin: str) -> bool:
+    if session_is_current(session):
+        return False
+    cancel_cue(session)
+    cancel_bleed(session, clear=True)
+    session.ended = True
+    print(
+        f"[STALE SESSION BLOCKED] origin={origin} guild={session.guild_id} "
+        f"user={session.user_id} mode={session.mode} floor={session.floor_number}"
+    )
+    return True
+
+
 def full_version_allowed(user_id: int) -> bool:
     return (DEBUG_USER_ID is not None and user_id == DEBUG_USER_ID) or db.has_full_access(user_id)
 
@@ -3344,6 +3376,12 @@ class OwnerView(discord.ui.View):
         if interaction.user.id != self.session.user_id:
             await interaction.response.defer()
             return False
+        if reject_stale_session(self.session, type(self).__name__):
+            await interaction.response.send_message(
+                "이 화면은 더 이상 현재 탐사에 연결되어 있지 않습니다. `/게임`으로 현재 탐사를 다시 열어주세요.",
+                ephemeral=True,
+            )
+            return False
         return True
 
 
@@ -3875,6 +3913,8 @@ def cancel_bleed(session: GameSession, *, clear=True):
 
 
 def schedule_bleed(interaction: discord.Interaction, session: GameSession):
+    if reject_stale_session(session, "schedule_bleed"):
+        return
     enemy = session.room().enemy
     if enemy is None or enemy.hp <= 0 or enemy.bleed_stacks <= 0:
         return
@@ -3890,6 +3930,8 @@ def schedule_bleed(interaction: discord.Interaction, session: GameSession):
 
 
 async def bleed_sequence(interaction, session, enemy, room_pos, token):
+    if reject_stale_session(session, "bleed_sequence_start"):
+        return
     next_tick = time.monotonic() + BLEED_TICK_SECONDS
 
     try:
@@ -3897,12 +3939,14 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
             await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
 
             if (
-                session.bleed_token != token
-                or session.ended
+                not session_is_current(session)
+                or session.bleed_token != token
                 or session.current != room_pos
                 or session.room().enemy is not enemy
                 or session.room().cleared
             ):
+                if not session_is_current(session):
+                    reject_stale_session(session, "bleed_sequence_tick")
                 return
 
             now = time.monotonic()
@@ -3912,6 +3956,9 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
                 clear_bleed(enemy)
                 return
 
+            if not session_is_current(session):
+                reject_stale_session(session, "bleed_before_damage")
+                return
             damage = enemy.bleed_stacks
             enemy.hp -= damage
             persist_session(session)
@@ -3921,7 +3968,13 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
                 enemy.hp = 0
                 while session.hit_animating and not session.ended:
                     await asyncio.sleep(0.05)
-                if session.ended or session.current != room_pos or session.room().cleared:
+                if (
+                    not session_is_current(session)
+                    or session.current != room_pos
+                    or session.room().cleared
+                ):
+                    if not session_is_current(session):
+                        reject_stale_session(session, "bleed_before_defeat")
                     return
                 await enemy_defeated(
                     interaction,
@@ -3942,6 +3995,8 @@ async def bleed_sequence(interaction, session, enemy, room_pos, token):
 
 
 def schedule_cue(interaction: discord.Interaction, session: GameSession, kind: str):
+    if reject_stale_session(session, f"schedule_cue:{kind}"):
+        return
     cancel_cue(session)
     session.phase = kind
     session.cue_kind = kind
@@ -3951,6 +4006,8 @@ def schedule_cue(interaction: discord.Interaction, session: GameSession, kind: s
 
 
 async def cue_sequence(interaction, session, kind, token):
+    if reject_stale_session(session, f"cue_sequence_start:{kind}"):
+        return
     enemy = session.room().enemy
     if enemy is None:
         return
@@ -3962,7 +4019,13 @@ async def cue_sequence(interaction, session, kind, token):
     try:
         for _ in range(random.randint(1, 3)):
             await asyncio.sleep(random.uniform(0.65, 1.35))
-            if session.cue_token != token or session.ended or session.phase != kind:
+            if (
+                not session_is_current(session)
+                or session.cue_token != token
+                or session.phase != kind
+            ):
+                if not session_is_current(session):
+                    reject_stale_session(session, f"cue_sequence_wait:{kind}")
                 return
 
             is_fake = full_version_allowed(session.user_id) and session.fake_enabled and random.random() < 0.48
@@ -3982,7 +4045,13 @@ async def cue_sequence(interaction, session, kind, token):
         spec = SHAPES[enemy.shape]
         low, high = spec["cue_delay"]
         await asyncio.sleep(random.uniform(max(0.45, low * 0.35), max(0.85, high * 0.45)))
-        if session.cue_token != token or session.ended or session.phase != kind:
+        if (
+            not session_is_current(session)
+            or session.cue_token != token
+            or session.phase != kind
+        ):
+            if not session_is_current(session):
+                reject_stale_session(session, f"cue_sequence_signal:{kind}")
             return
 
         p = session_player(session)
@@ -4001,20 +4070,25 @@ async def cue_sequence(interaction, session, kind, token):
         perfect, good = timing_windows(p, enemy, kind)
         await asyncio.sleep(good + 0.45)
         if (
-            session.cue_token == token
+            session_is_current(session)
+            and session.cue_token == token
             and session.phase == kind
             and session.cue_state == "real"
         ):
             await timeout_timing(interaction, session, kind, token)
+        elif not session_is_current(session):
+            reject_stale_session(session, f"cue_sequence_timeout:{kind}")
     except asyncio.CancelledError:
         return
     except discord.HTTPException:
-        if session.cue_token == token:
+        if session_is_current(session) and session.cue_token == token:
             session.phase = "battle_ready"
             session.cue_state = "idle"
 
 
 async def timeout_timing(interaction, session, kind, token):
+    if reject_stale_session(session, f"timeout_timing:{kind}"):
+        return
     if session.cue_token != token:
         return
 
@@ -4268,6 +4342,13 @@ async def open_secret(interaction, session):
 
 
 async def start_battle(interaction, session):
+    if reject_stale_session(session, "start_battle"):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "이 전투 화면은 오래된 탐사입니다. `/게임`으로 현재 탐사를 다시 열어주세요.",
+                ephemeral=True,
+            )
+        return
     enemy = session.room().enemy
     if enemy is not None and not session.is_tutorial:
         db.discover(session.user_id, "monster", enemy.shape)
@@ -4308,6 +4389,13 @@ async def start_battle(interaction, session):
 
 
 async def press_timing(interaction, session, kind):
+    if reject_stale_session(session, f"press_timing:{kind}"):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "이 전투 화면은 오래된 탐사입니다. `/게임`으로 현재 탐사를 다시 열어주세요.",
+                ephemeral=True,
+            )
+        return
     if session.phase != kind or session.cue_kind != kind:
         await interaction.response.defer()
         return
